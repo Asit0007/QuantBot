@@ -48,7 +48,7 @@ import requests
 from ta.momentum import RSIIndicator
 
 # ── Config from .env ──────────────────────────────────────────────
-TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN",  "")
+TOKEN       = os.getenv("TELEGRAM_TOKEN",  "")
 CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID","")
 DATA_DIR    = os.getenv("DATA_DIR", ".")
 STATE_FILE  = os.path.join(DATA_DIR, "bot_state.json")
@@ -371,29 +371,30 @@ class TradeWatcher:
 
 class HeartbeatMonitor:
     def __init__(self):
-        self._last_candle_ts = None
-        self._alert_sent     = False
+        self._last_updated_at = None
+        self._alert_sent      = False
 
     def check(self):
-        state  = read_json(STATE_FILE)
-        candle = state.get("last_candle_ts")
-        if candle is None:
+        state      = read_json(STATE_FILE)
+        updated_at = state.get("last_updated_at")
+        if updated_at is None:
+            return   # bot hasn't processed its first candle yet
+
+        if updated_at != self._last_updated_at:
+            # Bot updated — reset alert state
+            self._last_updated_at = updated_at
+            self._alert_sent      = False
             return
 
-        if candle != self._last_candle_ts:
-            self._last_candle_ts = candle
-            self._alert_sent     = False
-            return
-
-        # Candle timestamp unchanged — check how long
+        # Timestamp unchanged — measure wall-clock silence
         try:
-            last_ts = pd.to_datetime(candle, utc=True)
-            now     = pd.Timestamp.now(tz="UTC")
-            mins    = (now - last_ts).total_seconds() / 60
+            last  = pd.to_datetime(updated_at, utc=True)
+            now   = pd.Timestamp.now(tz="UTC")
+            mins  = (now - last).total_seconds() / 60
             if mins > HEARTBEAT_TIMEOUT and not self._alert_sent:
                 send(msg_crash_alert(mins))
                 self._alert_sent = True
-                log.warning(f"Crash alert sent — {mins:.0f}m silence")
+                log.warning(f"Crash alert sent — {mins:.0f}m since last state update")
         except Exception as e:
             log.error(f"Heartbeat check error: {e}")
 
@@ -467,7 +468,8 @@ class RSIScanner:
             tf_used, df_use = "Monthly", df_m
         else:
             log.info(f"  {coin}: {len(df_m)} monthly candles → using Weekly")
-            df_use = self._fetch_ohlcv(symbol, "1W", 200)
+            # Binance spot uses lowercase "1w" — "1W" is futures-only syntax
+            df_use = self._fetch_ohlcv(symbol, "1w", 200)
             tf_used = "Weekly"
             if df_use is None:
                 return
