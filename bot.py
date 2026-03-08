@@ -150,6 +150,7 @@ FRESH_STATE = {
     "total_pnl":          0.0,
     "total_fees":         0.0,
     "last_candle_ts":     None,
+    "last_updated_at":    None,   # wall-clock UTC ISO timestamp — updated every candle
     "last_dca_month":     None,   # [year, month] list or None
 }
 
@@ -912,7 +913,8 @@ def main(go_live: bool = False):
                 time.sleep(10)
                 continue
 
-            state["last_candle_ts"] = latest_ts
+            state["last_candle_ts"]  = latest_ts
+            state["last_updated_at"] = datetime.now(timezone.utc).isoformat()
             candle_n += 1
 
             bot.process(df, candle_n)
