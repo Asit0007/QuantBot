@@ -1,0 +1,12 @@
+# terraform/terraform.tfvars.example
+# Copy to terraform.tfvars and fill in. NEVER commit terraform.tfvars to git.
+
+tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaxxx"
+user_ocid        = "ocid1.user.oc1..aaaaaaaaxxx"
+fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+private_key_path = "~/.oci/oci_api_key.pem"
+region           = "us-ashburn-1"          # or uk-london-1, ap-mumbai-1, etc.
+compartment_ocid = "ocid1.tenancy.oc1..aaaaaaaaxxx"  # same as tenancy for root
+ssh_public_key   = "ssh-rsa AAAA... your@email.com"
+my_ip_cidr       = "1.2.3.4/32"            # your home IP (curl ifconfig.me)
+repo_url         = "https://github.com/yourname/quantbot.git"

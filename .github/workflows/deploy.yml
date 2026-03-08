@@ -1,0 +1,166 @@
+name: QuantBot CI/CD
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # ── 1. Lint — catches syntax errors BEFORE touching the live server ──
+  lint:
+    name: Lint & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8
+
+      - name: Syntax errors only (fail the build on real errors)
+        run: |
+          flake8 bot.py corpus_manager.py dashboard.py notifier.py \
+            --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Compile check all Python files
+        run: |
+          python -m py_compile bot.py
+          python -m py_compile corpus_manager.py
+          python -m py_compile dashboard.py
+          python -m py_compile notifier.py
+          echo "All files compile OK"
+
+  # ── 2. Deploy — only runs if lint passes ────────────────────────────
+  deploy:
+    name: Deploy to Oracle Cloud
+    runs-on: ubuntu-latest
+    needs: lint # will not run if lint fails
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # Detect which services changed — only restart those containers
+      - name: Detect changed services
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files: $CHANGED"
+
+          BOT=false; NOTIFIER=false; DASHBOARD=false; INFRA=false
+
+          echo "$CHANGED" | grep -qE "^bot\.py$|^corpus_manager\.py$" && BOT=true
+          echo "$CHANGED" | grep -q "notifier.py"   && NOTIFIER=true
+          echo "$CHANGED" | grep -q "dashboard.py"  && DASHBOARD=true
+          echo "$CHANGED" | grep -qE "^Dockerfile$|^requirements\.txt$|^docker-compose\.yml$|^nginx/" && INFRA=true
+
+          echo "bot=$BOT"             >> $GITHUB_OUTPUT
+          echo "notifier=$NOTIFIER"   >> $GITHUB_OUTPUT
+          echo "dashboard=$DASHBOARD" >> $GITHUB_OUTPUT
+          echo "infra=$INFRA"         >> $GITHUB_OUTPUT
+          echo "Bot=$BOT  Notifier=$NOTIFIER  Dashboard=$DASHBOARD  Infra=$INFRA"
+
+      # Safety gate — never auto-restart bot.py if there is an open position
+      - name: Check for open position (bot safety gate)
+        id: safety
+        if: steps.changes.outputs.bot == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          script: |
+            POS=$(docker exec quantbot_bot python3 -c "
+            import json, os
+            try:
+                s = json.load(open(os.environ['DATA_DIR']+'/bot_state.json'))
+                print('open' if s.get('position') else 'none')
+            except: print('none')
+            " 2>/dev/null || echo "none")
+            echo "position=$POS" >> $GITHUB_OUTPUT
+            if [ "$POS" = "open" ]; then
+              echo "WARNING: bot.py changed but position is OPEN. Skipping bot restart."
+              echo "Re-push after the position closes, or restart manually."
+            fi
+
+      # Copy files to server
+      - name: Copy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          source: "."
+          target: "~/quantbot"
+          overwrite: true
+
+      # Selective restart — only rebuild changed containers
+      - name: Restart changed services
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/quantbot
+
+            # Full rebuild if Dockerfile / requirements / compose / nginx changed
+            if [ "${{ steps.changes.outputs.infra }}" = "true" ]; then
+              echo "Infrastructure changed — full rebuild..."
+              docker-compose build && docker-compose up -d
+              echo "Full rebuild complete"; exit 0
+            fi
+
+            RESTARTED=""
+
+            if [ "${{ steps.changes.outputs.dashboard }}" = "true" ]; then
+              docker-compose up -d --no-deps --build dashboard
+              RESTARTED="$RESTARTED dashboard"
+            fi
+
+            if [ "${{ steps.changes.outputs.notifier }}" = "true" ]; then
+              docker-compose up -d --no-deps --build notifier
+              RESTARTED="$RESTARTED notifier"
+            fi
+
+            if [ "${{ steps.changes.outputs.bot }}" = "true" ]; then
+              POS="${{ steps.safety.outputs.position }}"
+              if [ "$POS" != "open" ]; then
+                docker-compose up -d --no-deps --build bot
+                RESTARTED="$RESTARTED bot"
+              else
+                echo "Skipping bot restart — open position detected"
+              fi
+            fi
+
+            [ -z "$RESTARTED" ] && echo "No service restarts needed" || echo "Restarted:$RESTARTED"
+            docker-compose ps
+
+      # Verify all containers are still running after deploy
+      - name: Health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          script: |
+            sleep 8
+            FAILED=0
+            for svc in bot notifier dashboard; do
+              STATUS=$(docker inspect --format='{{.State.Status}}' quantbot_$svc 2>/dev/null || echo "missing")
+              if [ "$STATUS" != "running" ]; then
+                echo "FAILED: $svc is $STATUS"
+                docker-compose -f ~/quantbot/docker-compose.yml logs $svc --tail=30
+                FAILED=1
+              else
+                echo "OK: $svc running"
+              fi
+            done
+            exit $FAILED

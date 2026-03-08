@@ -1,0 +1,39 @@
+# ─── NEVER commit these ───────────────────────────────────────────────────────
+.env
+*.db
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+*.pyo
+
+# ─── OS / Editor ─────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ─── Docker ──────────────────────────────────────────────────────────────────
+*.tar
+
+# Secrets — NEVER commit
+.env
+terraform/terraform.tfvars
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+nginx/certs/
+nginx/htpasswd
+
+# Bot runtime state (local only)
+bot_state.json
+bot_activity.log
+bot.log
+corpus_state.json
+trade_log.csv
+rsi_alert_state.json
+bot_paused.flag
+notifier.log
