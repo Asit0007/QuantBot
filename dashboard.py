@@ -40,6 +40,7 @@ DATA_DIR    = os.getenv("DATA_DIR", ".")
 STATE_FILE  = os.path.join(DATA_DIR, "bot_state.json")
 CORPUS_FILE = os.path.join(DATA_DIR, "corpus_state.json")
 TRADE_LOG   = os.path.join(DATA_DIR, "trade_log.csv")
+RSI_HISTORY = os.path.join(DATA_DIR, "rsi_history.json")
 REFRESH_MS  = int(os.getenv("DASHBOARD_REFRESH_MS", "15000"))
 DASH_PORT   = int(os.getenv("DASHBOARD_PORT", "8050"))
 DASH_HOST   = os.getenv("DASHBOARD_HOST", "127.0.0.1")
@@ -119,6 +120,20 @@ def load_trades() -> pd.DataFrame:
         if "fees_usd" not in df.columns and "fees" in df.columns:
             df["fees_usd"] = df["fees"]
         return df.sort_values("datetime", ascending=False)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_rsi_history() -> pd.DataFrame:
+    try:
+        if not Path(RSI_HISTORY).exists():
+            return pd.DataFrame()
+        with open(RSI_HISTORY) as f:
+            data = json.load(f)
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        return df
     except Exception:
         return pd.DataFrame()
 
@@ -360,73 +375,111 @@ def dcol(v):
 # ══════════════════════════════════════════════════════════════════
 
 app = Dash(__name__, title="QuantBot", update_title=None)
+TAB_STYLE        = {"padding": "8px 20px", "fontWeight": "500",
+                    "color": MUTED, "borderBottom": f"2px solid {BRD}",
+                    "background": BG, "border": "none", "cursor": "pointer"}
+TAB_SELECTED     = {**TAB_STYLE, "color": BLU, "borderBottom": f"2px solid {BLU}"}
+
 app.layout = html.Div([
     dcc.Interval(id="tick", interval=REFRESH_MS, n_intervals=0),
 
     # Header
     html.Div([
         html.Div([
-            html.Span("⚡", style={"marginRight":"6px"}),
-            html.Span("QuantBot", style={"fontWeight":"700", "color":BLU}),
-            html.Span(" Dashboard", style={"color":MUTED}),
-        ], style={"fontSize":"18px"}),
-        html.Div(id="hdr-mid", style={"color":GRN, "fontSize":"13px"}),
-        html.Div(id="hdr-time", style={"color":MUTED, "fontSize":"11px"}),
-    ], style={"display":"flex", "justifyContent":"space-between", "alignItems":"center",
-              "background":SURF, "borderBottom":f"1px solid {BRD}", "padding":"13px 24px"}),
+            html.Span("⚡", style={"marginRight": "6px"}),
+            html.Span("QuantBot", style={"fontWeight": "700", "color": BLU}),
+            html.Span(" Dashboard", style={"color": MUTED}),
+        ], style={"fontSize": "18px"}),
+        html.Div(id="hdr-mid", style={"color": GRN, "fontSize": "13px"}),
+        html.Div(id="hdr-time", style={"color": MUTED, "fontSize": "11px"}),
+    ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
+              "background": SURF, "borderBottom": f"1px solid {BRD}", "padding": "13px 24px"}),
 
-    # Main
-    html.Div([
-        # Row 1 — Core KPIs
+    # Tabs
+    dcc.Tabs(id="tabs", value="tab-overview", children=[
+        dcc.Tab(label="📈  Overview", value="tab-overview",
+                style=TAB_STYLE, selected_style=TAB_SELECTED),
+        dcc.Tab(label="🔭  RSI Radar", value="tab-rsi",
+                style=TAB_STYLE, selected_style=TAB_SELECTED),
+    ], style={"background": BG, "borderBottom": f"1px solid {BRD}",
+              "paddingLeft": "24px"}),
+
+    html.Div(id="tab-content"),
+
+], style={"backgroundColor": BG, "color": TXT,
+          "fontFamily": "'Inter','Segoe UI',system-ui,sans-serif", "minHeight": "100vh"})
+
+
+# ── Tab router ────────────────────────────────────────────────────
+@app.callback(Output("tab-content", "children"), Input("tabs", "value"))
+def render_tab(tab):
+    if tab == "tab-rsi":
+        return html.Div([
+            # Current readings gauges
+            html.Div([
+                html.Div("Current RSI Readings", style={
+                    "color": MUTED, "fontSize": "10px", "textTransform": "uppercase",
+                    "letterSpacing": "1px", "marginBottom": "12px"}),
+                html.Div(id="rsi-gauges",
+                         style={"display": "flex", "gap": "12px", "flexWrap": "wrap"}),
+            ], style={"marginBottom": "24px"}),
+
+            # Extreme events table
+            html.Div([
+                html.Div("RSI Extreme Events  (< 20 oversold  |  > 80 overbought)",
+                         style={"color": MUTED, "fontSize": "10px", "textTransform": "uppercase",
+                                "letterSpacing": "1px", "marginBottom": "12px"}),
+                html.Div(id="rsi-extremes-tbl"),
+            ], style={"marginBottom": "24px"}),
+
+            # RSI over time line chart
+            html.Div([
+                html.Div("RSI History by Coin", style={
+                    "color": MUTED, "fontSize": "10px", "textTransform": "uppercase",
+                    "letterSpacing": "1px", "marginBottom": "12px"}),
+                dcc.Graph(id="rsi-chart", config={"displayModeBar": False}),
+            ]),
+        ], style={"padding": "18px 24px", "maxWidth": "1900px", "margin": "0 auto"})
+
+    # Default: Overview tab
+    return html.Div([
         html.Div(id="row-kpi",
-                 style={"display":"flex","gap":"8px","flexWrap":"wrap","marginBottom":"14px"}),
-        # Row 2 — Quality metrics
+                 style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "14px"}),
         html.Div(id="row-quality",
-                 style={"display":"flex","gap":"8px","flexWrap":"wrap","marginBottom":"16px"}),
-
-        # Equity + Drawdown (left wide) + Side/RWR (right narrow)
+                 style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "16px"}),
         html.Div([
             html.Div([
-                dcc.Graph(id="ch-eq",  config={"displayModeBar":False}),
-                dcc.Graph(id="ch-dd",  config={"displayModeBar":False}),
-            ], style={"flex":"3"}),
+                dcc.Graph(id="ch-eq",  config={"displayModeBar": False}),
+                dcc.Graph(id="ch-dd",  config={"displayModeBar": False}),
+            ], style={"flex": "3"}),
             html.Div([
-                dcc.Graph(id="ch-side",config={"displayModeBar":False}),
-                dcc.Graph(id="ch-rwr", config={"displayModeBar":False}),
-            ], style={"flex":"2"}),
-        ], style={"display":"flex","gap":"16px","marginBottom":"16px"}),
-
-        # Hist + Monthly + Cumulative
+                dcc.Graph(id="ch-side", config={"displayModeBar": False}),
+                dcc.Graph(id="ch-rwr",  config={"displayModeBar": False}),
+            ], style={"flex": "2"}),
+        ], style={"display": "flex", "gap": "16px", "marginBottom": "16px"}),
         html.Div([
-            dcc.Graph(id="ch-hist",    config={"displayModeBar":False}, style={"flex":"1"}),
-            dcc.Graph(id="ch-monthly", config={"displayModeBar":False}, style={"flex":"1"}),
-            dcc.Graph(id="ch-cum",     config={"displayModeBar":False}, style={"flex":"1"}),
-        ], style={"display":"flex","gap":"16px","marginBottom":"16px"}),
-
-        # Position / CB status
-        html.Div(id="pos-card", style={"marginBottom":"16px"}),
-
-        # Trade table
+            dcc.Graph(id="ch-hist",    config={"displayModeBar": False}, style={"flex": "1"}),
+            dcc.Graph(id="ch-monthly", config={"displayModeBar": False}, style={"flex": "1"}),
+            dcc.Graph(id="ch-cum",     config={"displayModeBar": False}, style={"flex": "1"}),
+        ], style={"display": "flex", "gap": "16px", "marginBottom": "16px"}),
+        html.Div(id="pos-card", style={"marginBottom": "16px"}),
         html.Div([
-            html.Div("All Trades", style={"color":MUTED,"fontSize":"10px",
-                "textTransform":"uppercase","letterSpacing":"1px","marginBottom":"10px"}),
+            html.Div("All Trades", style={"color": MUTED, "fontSize": "10px",
+                "textTransform": "uppercase", "letterSpacing": "1px", "marginBottom": "10px"}),
             html.Div(id="trade-tbl"),
         ]),
-    ], style={"padding":"18px 24px","maxWidth":"1900px","margin":"0 auto"}),
-
-], style={"backgroundColor":BG,"color":TXT,
-          "fontFamily":"'Inter','Segoe UI',system-ui,sans-serif","minHeight":"100vh"})
+    ], style={"padding": "18px 24px", "maxWidth": "1900px", "margin": "0 auto"})
 
 
 @app.callback(
-    [Output("hdr-mid","children"),   Output("hdr-time","children"),
-     Output("row-kpi","children"),   Output("row-quality","children"),
-     Output("ch-eq","figure"),       Output("ch-dd","figure"),
-     Output("ch-hist","figure"),     Output("ch-monthly","figure"),
-     Output("ch-side","figure"),     Output("ch-rwr","figure"),
-     Output("ch-cum","figure"),      Output("pos-card","children"),
-     Output("trade-tbl","children")],
-    Input("tick","n_intervals"),
+    [Output("hdr-mid", "children"),   Output("hdr-time", "children"),
+     Output("row-kpi", "children"),   Output("row-quality", "children"),
+     Output("ch-eq", "figure"),       Output("ch-dd", "figure"),
+     Output("ch-hist", "figure"),     Output("ch-monthly", "figure"),
+     Output("ch-side", "figure"),     Output("ch-rwr", "figure"),
+     Output("ch-cum", "figure"),      Output("pos-card", "children"),
+     Output("trade-tbl", "children")],
+    Input("tick", "n_intervals"),
 )
 def refresh(_):
     try:
@@ -600,6 +653,176 @@ def refresh(_):
         ])
         return (f"Error: {e}", "", [], [],
                 ef, ef, ef, ef, ef, ef, ef, err, err)
+
+
+# ── RSI Radar callback ────────────────────────────────────────────
+@app.callback(
+    [Output("rsi-gauges",       "children"),
+     Output("rsi-extremes-tbl", "children"),
+     Output("rsi-chart",        "figure")],
+    Input("tick", "n_intervals"),
+)
+def refresh_rsi(_):
+    empty_fig = go.Figure().update_layout(**PLBASE)
+    no_data   = html.Div("No RSI history yet — notifier runs its first scan a few minutes after startup.",
+                         style={"color": MUTED, "padding": "24px", "background": SURF,
+                                "borderRadius": "8px", "border": f"1px solid {BRD}",
+                                "textAlign": "center"})
+    try:
+        df = load_rsi_history()
+        if df.empty:
+            return [], no_data, empty_fig
+
+        # ── 1. GAUGES — latest reading per coin ───────────────────
+        latest = df.groupby("coin").tail(1).reset_index(drop=True)
+        gauges  = []
+        for _, row in latest.iterrows():
+            rsi   = row["rsi"]
+            coin  = row["coin"]
+            tf    = row["tf"]
+            zone  = row["zone"]
+            ts    = row["ts"]
+
+            if zone == "oversold":
+                border_color = GRN
+                badge_bg     = "#0d2818"
+                badge_txt    = "OVERSOLD 🟢"
+            elif zone == "overbought":
+                border_color = RED
+                badge_bg     = "#2d0f0f"
+                badge_txt    = "OVERBOUGHT 🔴"
+            else:
+                border_color = BRD
+                badge_bg     = SURF
+                badge_txt    = "Neutral"
+
+            # colour the RSI number itself
+            if rsi <= 30:
+                rsi_color = GRN
+            elif rsi >= 70:
+                rsi_color = RED
+            elif rsi <= 40 or rsi >= 60:
+                rsi_color = YLW
+            else:
+                rsi_color = TXT
+
+            gauges.append(html.Div([
+                html.Div(coin, style={"fontWeight": "700", "fontSize": "15px",
+                                      "marginBottom": "4px"}),
+                html.Div(f"{tf}", style={"color": MUTED, "fontSize": "10px",
+                                          "marginBottom": "8px"}),
+                html.Div(f"{rsi:.1f}", style={"fontSize": "32px", "fontWeight": "800",
+                                               "color": rsi_color, "lineHeight": "1"}),
+                html.Div("RSI", style={"color": MUTED, "fontSize": "10px",
+                                       "marginBottom": "8px"}),
+                html.Div(badge_txt, style={"fontSize": "10px", "padding": "3px 8px",
+                                           "background": badge_bg, "borderRadius": "4px",
+                                           "color": border_color, "fontWeight": "600",
+                                           "marginBottom": "8px"}),
+                html.Div(ts, style={"color": MUTED, "fontSize": "9px"}),
+            ], style={
+                "background": SURF, "border": f"1px solid {border_color}",
+                "borderRadius": "10px", "padding": "16px 20px",
+                "minWidth": "130px", "textAlign": "center",
+            }))
+
+        # ── 2. EXTREMES TABLE — all readings < 20 or > 80 ────────
+        extremes = df[df["zone"].isin(["oversold", "overbought"])].copy()
+        extremes = extremes.sort_values("ts", ascending=False).reset_index(drop=True)
+
+        if extremes.empty:
+            extremes_section = html.Div(
+                "No RSI extremes recorded yet — thresholds are < 20 (oversold) and > 80 (overbought).",
+                style={"color": MUTED, "padding": "20px", "background": SURF,
+                       "borderRadius": "8px", "border": f"1px solid {BRD}",
+                       "textAlign": "center", "fontSize": "13px"})
+        else:
+            rows = []
+            for _, r in extremes.iterrows():
+                is_os   = r["zone"] == "oversold"
+                z_color = GRN if is_os else RED
+                rows.append(html.Tr([
+                    html.Td(r["ts"],
+                            style={"color": MUTED,   "padding": "8px 14px", "fontSize": "12px"}),
+                    html.Td(r["coin"],
+                            style={"fontWeight": "700", "padding": "8px 14px"}),
+                    html.Td(r["tf"],
+                            style={"color": MUTED,   "padding": "8px 14px"}),
+                    html.Td(f"{r['rsi']:.1f}",
+                            style={"color": z_color, "padding": "8px 14px",
+                                   "fontWeight": "700", "textAlign": "right"}),
+                    html.Td("OVERSOLD 📉" if is_os else "OVERBOUGHT 📈",
+                            style={"color": z_color, "padding": "8px 14px", "fontSize": "11px"}),
+                    html.Td(f"${r['price']:,.4f}",
+                            style={"color": TXT,     "padding": "8px 14px",
+                                   "textAlign": "right", "fontFamily": "monospace"}),
+                ]))
+
+            extremes_section = html.Table(
+                [html.Thead(html.Tr([
+                    html.Th(h, style={"color": MUTED, "padding": "8px 14px", "fontSize": "10px",
+                                      "textTransform": "uppercase", "letterSpacing": "1px",
+                                      "textAlign": "left", "fontWeight": "500",
+                                      "borderBottom": f"1px solid {BRD}"})
+                    for h in ["Timestamp", "Coin", "Timeframe", "RSI", "Zone", "Price"]
+                ])),
+                 html.Tbody(rows)],
+                style={"width": "100%", "borderCollapse": "collapse",
+                       "background": SURF, "borderRadius": "8px",
+                       "border": f"1px solid {BRD}"}
+            )
+
+        # ── 3. LINE CHART — RSI over time per coin ────────────────
+        fig = go.Figure()
+
+        # Oversold / overbought reference bands
+        fig.add_hrect(y0=0,  y1=20, fillcolor=GRN, opacity=0.06, line_width=0,
+                      annotation_text="Oversold < 20", annotation_position="left",
+                      annotation_font_color=GRN, annotation_font_size=10)
+        fig.add_hrect(y0=80, y1=100, fillcolor=RED, opacity=0.06, line_width=0,
+                      annotation_text="Overbought > 80", annotation_position="left",
+                      annotation_font_color=RED, annotation_font_size=10)
+        fig.add_hline(y=20, line_dash="dot", line_color=GRN, line_width=1)
+        fig.add_hline(y=80, line_dash="dot", line_color=RED, line_width=1)
+        fig.add_hline(y=50, line_dash="dot", line_color=BRD, line_width=1)
+
+        COIN_COLORS = ["#58a6ff", "#3fb950", "#f85149", "#d29922", "#bc8cff", "#ff7b72"]
+        for i, (coin, grp) in enumerate(df.groupby("coin")):
+            grp = grp.sort_values("ts")
+            fig.add_trace(go.Scatter(
+                x=grp["ts"], y=grp["rsi"],
+                name=coin,
+                mode="lines+markers",
+                line=dict(color=COIN_COLORS[i % len(COIN_COLORS)], width=2),
+                marker=dict(size=5),
+                hovertemplate=(
+                    f"<b>{coin}</b><br>"
+                    "RSI: %{y:.1f}<br>"
+                    "Time: %{x}<br>"
+                    "<extra></extra>"
+                )
+            ))
+
+        fig.update_layout(
+            **PLBASE,
+            height=340,
+            yaxis=dict(range=[0, 100], gridcolor=BRD, ticksuffix="",
+                       title=dict(text="RSI", font=dict(color=MUTED, size=11))),
+            xaxis=dict(gridcolor=BRD),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="left", x=0, font=dict(color=MUTED, size=11)),
+            hovermode="x unified",
+        )
+
+        return gauges, extremes_section, fig
+
+    except Exception as e:
+        tb  = traceback.format_exc()
+        err = html.Div([
+            html.Div(f"RSI Radar error: {e}", style={"color": RED}),
+            html.Pre(tb, style={"color": MUTED, "fontSize": "10px"}),
+        ])
+        return [], err, empty_fig
 
 
 if __name__ == "__main__":
