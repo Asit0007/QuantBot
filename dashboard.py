@@ -414,7 +414,7 @@ app.layout = html.Div([
         }),
         html.Span("  ·  ", style={"color": BRD}),
         html.Span("Trained on caffeine. Powered by backtest.", style={
-            "color": MUTED, "fontStyle": "italic"
+            "color": MUTED, "fontSize": "10px"
         }),
         html.Span("  ·  ", style={"color": BRD}),
         html.Span("Not financial advice. Just vibes and RSI divergence.", style={
