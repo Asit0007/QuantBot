@@ -406,6 +406,29 @@ app.layout = html.Div([
 
     html.Div(id="tab-content"),
 
+    # Footer watermark
+    html.Div([
+        html.Span("⚡ Built by ", style={"color": MUTED}),
+        html.Span("Asit Minz", style={
+            "color": BLU, "fontWeight": "700", "letterSpacing": "0.5px"
+        }),
+        html.Span("  ·  ", style={"color": BRD}),
+        html.Span("Trained on caffeine. Powered by backtest.", style={
+            "color": MUTED, "fontStyle": "italic"
+        }),
+        html.Span("  ·  ", style={"color": BRD}),
+        html.Span("Not financial advice. Just vibes and RSI divergence.", style={
+            "color": MUTED, "fontSize": "10px"
+        }),
+    ], style={
+        "textAlign": "center",
+        "padding": "18px 24px",
+        "fontSize": "11px",
+        "borderTop": f"1px solid {BRD}",
+        "marginTop": "32px",
+        "letterSpacing": "0.3px",
+    }),
+
 ], style={"backgroundColor": BG, "color": TXT,
           "fontFamily": "'Inter','Segoe UI',system-ui,sans-serif", "minHeight": "100vh"})
 
