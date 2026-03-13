@@ -37,3 +37,4 @@ trade_log.csv
 rsi_alert_state.json
 bot_paused.flag
 notifier.log
+rsi_history.json
