@@ -48,13 +48,14 @@ import requests
 from ta.momentum import RSIIndicator
 
 # ── Config from .env ──────────────────────────────────────────────
-TOKEN       = os.getenv("TELEGRAM_TOKEN",  "")
+TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN",  "")
 CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID","")
 DATA_DIR    = os.getenv("DATA_DIR", ".")
 STATE_FILE  = os.path.join(DATA_DIR, "bot_state.json")
 CORPUS_FILE = os.path.join(DATA_DIR, "corpus_state.json")
 TRADE_LOG   = os.path.join(DATA_DIR, "trade_log.csv")
 RSI_STATE   = os.path.join(DATA_DIR, "rsi_alert_state.json")
+RSI_HISTORY = os.path.join(DATA_DIR, "rsi_history.json")   # full scan log — read by dashboard
 BOT_PAUSED  = os.path.join(DATA_DIR, "bot_paused.flag")
 LOG_FILE    = os.path.join(DATA_DIR, "notifier.log")
 
@@ -486,12 +487,18 @@ class RSIScanner:
         state_key = f"{coin}_{tf}"
         log.info(f"  {coin} [{tf}]: RSI={rsi_val:.1f}  price=${price:,.4f}")
 
+        # ── Persist every reading to rsi_history.json for the dashboard ──
+        zone = None
         if rsi_val <= RSI_OVERSOLD:
             zone = "oversold"
         elif rsi_val >= RSI_OVERBOUGHT:
             zone = "overbought"
-        else:
-            self._state.pop(state_key, None)   # back to neutral — reset so it re-fires next time
+
+        self._append_history(coin, tf, rsi_val, price, zone)
+
+        # ── Alert logic (only for extremes, no duplicate alerts) ──────────
+        if zone is None:
+            self._state.pop(state_key, None)   # back to neutral — re-arms next time
             return
 
         if self._state.get(state_key) == zone:
@@ -501,6 +508,33 @@ class RSIScanner:
         send(msg_rsi_alert(coin, rsi_val, tf, price))
         self._state[state_key] = zone
         log.info(f"  {coin}: RSI alert sent ({zone}  {rsi_val:.1f})")
+
+    def _append_history(self, coin: str, tf: str, rsi: float, price: float, zone: str | None):
+        """Append one RSI reading to rsi_history.json — dashboard reads this file."""
+        try:
+            try:
+                with open(RSI_HISTORY) as f:
+                    history = json.load(f)
+            except Exception:
+                history = []
+
+            history.append({
+                "ts":    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "coin":  coin,
+                "tf":    tf,
+                "rsi":   round(rsi, 1),
+                "price": price,
+                "zone":  zone or "neutral",
+            })
+
+            # Keep last 2000 entries (~1 year at 4h scans × 6 coins)
+            if len(history) > 2000:
+                history = history[-2000:]
+
+            with open(RSI_HISTORY, "w") as f:
+                json.dump(history, f)
+        except Exception as e:
+            log.error(f"RSI history write error: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════
