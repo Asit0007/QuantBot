@@ -83,10 +83,11 @@ jobs:
                 print('open' if s.get('position') else 'none')
             except: print('none')
             " 2>/dev/null || echo "none")
-            echo "position=$POS" >> $GITHUB_OUTPUT
+            echo "$POS" > /tmp/quantbot_position_status
             if [ "$POS" = "open" ]; then
-              echo "WARNING: bot.py changed but position is OPEN. Skipping bot restart."
-              echo "Re-push after the position closes, or restart manually."
+              echo "WARNING: open position detected — bot restart will be skipped."
+            else
+              echo "No open position — bot restart is safe."
             fi
 
       # Copy files to server
@@ -131,7 +132,7 @@ jobs:
             fi
 
             if [ "${{ steps.changes.outputs.bot }}" = "true" ]; then
-              POS="${{ steps.safety.outputs.position }}"
+              POS=$(cat /tmp/quantbot_position_status 2>/dev/null || echo "none")
               if [ "$POS" != "open" ]; then
                 docker-compose up -d --no-deps --build bot
                 RESTARTED="$RESTARTED bot"
