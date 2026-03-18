@@ -22,9 +22,9 @@ variable "private_key_path" {
 }
 
 variable "region" {
-  description = "OCI region (e.g. us-ashburn-1, uk-london-1, ap-singapore-1)"
+  description = "OCI region — your home region is ap-hyderabad-1 (India South)"
   type        = string
-  default     = "us-ashburn-1"
+  default     = "ap-hyderabad-1"
 }
 
 variable "compartment_ocid" {
@@ -44,6 +44,11 @@ variable "my_ip_cidr" {
 
 variable "repo_url" {
   description = "GitHub repo URL (e.g. https://github.com/yourname/quantbot.git)"
+  type        = string
+}
+
+variable "vm_image_ocid" {
+  description = "Ubuntu 22.04 ARM image OCID for your region. Find it in OCI Console → Compute → Instances → Create Instance → Change Image → Ubuntu 22.04 → click (i) icon → copy OCID"
   type        = string
 }
 

@@ -32,19 +32,9 @@ provider "oci" {
   region           = var.region
 }
 
-# ── Data sources ──────────────────────────────────────────────────
+# ── Availability domains ──────────────────────────────────────────
 data "oci_identity_availability_domains" "ads" {
   compartment_id = var.tenancy_ocid
-}
-
-# Ubuntu 22.04 ARM (aarch64) — latest minimal image
-data "oci_core_images" "ubuntu_arm" {
-  compartment_id           = var.compartment_ocid
-  operating_system         = "Canonical Ubuntu"
-  operating_system_version = "22.04"
-  shape                    = "VM.Standard.A1.Flex"
-  sort_by                  = "TIMECREATED"
-  sort_order               = "DESC"
 }
 
 # ── Network ───────────────────────────────────────────────────────
@@ -90,7 +80,10 @@ resource "oci_core_security_list" "quantbot_sl" {
     protocol  = "6"   # TCP
     source    = var.my_ip_cidr
     stateless = false
-    tcp_options { min = 22; max = 22 }
+    tcp_options {
+      min = 22
+      max = 22
+    }
   }
 
   # HTTP (Let's Encrypt challenge + redirect to HTTPS)
@@ -98,7 +91,10 @@ resource "oci_core_security_list" "quantbot_sl" {
     protocol  = "6"
     source    = "0.0.0.0/0"
     stateless = false
-    tcp_options { min = 80; max = 80 }
+    tcp_options {
+      min = 80
+      max = 80
+    }
   }
 
   # Dashboard — port 8888 (IP-only, no SSL required)
@@ -107,7 +103,10 @@ resource "oci_core_security_list" "quantbot_sl" {
     protocol  = "6"
     source    = var.my_ip_cidr
     stateless = false
-    tcp_options { min = 8888; max = 8888 }
+    tcp_options {
+      min = 8888
+      max = 8888
+    }
   }
 }
 
@@ -136,7 +135,7 @@ resource "oci_core_instance" "quantbot_vm" {
 
   source_details {
     source_type             = "image"
-    source_id               = data.oci_core_images.ubuntu_arm.images[0].id
+    source_id               = var.vm_image_ocid
     boot_volume_size_in_gbs = 50   # free tier allows 50 GB
   }
 
