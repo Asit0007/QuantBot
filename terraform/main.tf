@@ -101,12 +101,13 @@ resource "oci_core_security_list" "quantbot_sl" {
     tcp_options { min = 80; max = 80 }
   }
 
-  # HTTPS (dashboard)
+  # Dashboard — port 8888 (IP-only, no SSL required)
+  # Lock this down to your IP only for security
   ingress_security_rules {
     protocol  = "6"
-    source    = "0.0.0.0/0"
+    source    = var.my_ip_cidr
     stateless = false
-    tcp_options { min = 443; max = 443 }
+    tcp_options { min = 8888; max = 8888 }
   }
 }
 
@@ -193,11 +194,7 @@ resource "oci_core_instance" "quantbot_vm" {
   freeform_tags = { "project" = "quantbot" }
 }
 
-# ── Block Volume (extra storage for logs) ─────────────────────────
-resource "oci_core_volume" "quantbot_data" {
-  compartment_id      = var.compartment_ocid
-  availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
-  display_name        = "quantbot-data"
-  size_in_gbs         = 50
-  freeform_tags       = { "project" = "quantbot" }
-}
+# ── Block volume removed ──────────────────────────────────────────
+# Docker named volume 'quantbot_data' stores all state files on the
+# boot volume (50 GB). A separate block volume is not needed and
+# would consume free-tier quota without being used.
