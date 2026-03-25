@@ -2,32 +2,11 @@
 """
 bot.py — QuantBot Live Trading Engine v1.0
 ════════════════════════════════════════════════════════════════════
-Built from 20 backtests (Sep 2019 → Mar 2026), $100 → $4,699
-
-LOCKED PARAMETERS (do not change without re-backtesting):
-  Signal:   RSI Divergence(14) + MACD Cross(12/26/9) + Volume(2×)
-  Asset:    BTC/USDT isolated margin futures
-  Frame:    15m candles
-  Leverage: 20×
-  Risk:     10% of corpus per trade (as margin)
-  CB:       5 consecutive losses → 48h pause (flat)
-  DCA:      $10/mo on 10th, +10%/yr
-  Ratchet:  corpus UP after 10 net+ trades, DOWN after 10 consec losses
-
-PAPER TRADE FIRST:
-  PAPER_TRADE = true  (default in .env)  → simulates everything, no real orders
-  Run 20+ paper trades, compare WR (~12%) and PF (~1.78) to backtest.
-  Only set PAPER_TRADE=false in .env after confirming live performance.
-
 USAGE:
   python bot.py               → paper trade (safe default)
   python bot.py --live        → live trade (requires API keys in .env)
   python bot.py --status      → print current state and exit
   python bot.py --reset       → wipe all state files and start fresh
-
-API KEYS (for live mode only — set in .env, never hardcode):
-  BINANCE_API_KEY=your_key
-  BINANCE_API_SECRET=your_secret
 ════════════════════════════════════════════════════════════════════
 """
 
@@ -58,46 +37,48 @@ from corpus_manager import CorpusManager
 #  CONFIGURATION — All locked parameters from 20 backtests
 # ══════════════════════════════════════════════════════════════════════
 
-# ── User-facing parameters — set these in .env ────────────────────
-# PAPER_TRADE: "true" → simulate only. Set "false" in .env to go live.
-PAPER_TRADE    = os.getenv("PAPER_TRADE", "true").strip().lower() == "true"
+try:
+    # ── User-facing parameters ───────────────────────────────────────
+    # PAPER_TRADE: Fails if missing, securely converts string to boolean
+    PAPER_TRADE    = os.environ["PAPER_TRADE"].strip().lower() == "true"
 
-# Starting balance for a fresh state (only used on first ever run)
-START_BALANCE  = float(os.getenv("START_BALANCE", "100.0"))
+    # Account & Sizing
+    START_BALANCE  = float(os.environ["START_BALANCE"])
+    LEVERAGE       = int(os.environ["LEVERAGE"])
+    RISK_PER_TRADE = float(os.environ["RISK_PER_TRADE"])
 
-# Position sizing
-LEVERAGE       = int(os.getenv("LEVERAGE", "20"))
-RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", "0.10"))
+    # Corpus / DCA
+    DCA_DAY        = int(os.environ["DCA_DAY"])       
+    DCA_BASE       = float(os.environ["DCA_MONTHLY_USD"])   
+    DCA_GROWTH     = float(os.environ["DCA_ANNUAL_GROWTH"]) 
+    START_YEAR     = int(os.environ["START_YEAR"])   
 
-# Corpus / DCA
-DCA_DAY        = int(os.getenv("DCA_DAY", "10"))       # day of month for contribution
-DCA_BASE       = float(os.getenv("DCA_MONTHLY_USD", "10.0"))   # base monthly DCA ($)
-DCA_GROWTH     = float(os.getenv("DCA_ANNUAL_GROWTH", "0.10")) # 10% annual step-up
-START_YEAR     = int(os.getenv("START_YEAR", "2026"))   # year the bot first ran
+    # ── LOCKED strategy parameters (IP Protected) ────────────────────
+    # No defaults provided. Requires full .env file to run.
+    SYMBOL          = os.environ["SYMBOL"]
+    TIMEFRAME       = os.environ["TIMEFRAME"]
+    CANDLE_MINUTES  = int(os.environ["CANDLE_MINUTES"])
+    LONG_ATR_MULT   = float(os.environ["LONG_ATR_MULT"])
+    SHORT_ATR_MULT  = float(os.environ["SHORT_ATR_MULT"])
+    RSI_LEN         = int(os.environ["RSI_LEN"])
+    MACD_FAST       = int(os.environ["MACD_FAST"])
+    MACD_SLOW       = int(os.environ["MACD_SLOW"])
+    MACD_SIGNAL_WIN = int(os.environ["MACD_SIGNAL_WIN"])
+    VOL_MULT        = float(os.environ["VOL_MULT"])
+    VOL_SMA_PERIOD  = int(os.environ["VOL_SMA_PERIOD"])
+    ATR_PERIOD      = int(os.environ["ATR_PERIOD"])
+    DIV_WINDOW      = int(os.environ["DIV_WINDOW"])
+    DIV_SHIFT       = int(os.environ["DIV_SHIFT"])
+    DIV_MEMORY      = int(os.environ["DIV_MEMORY"])
+    CB_TRIGGER      = int(os.environ["CB_TRIGGER"])
+    CB_HOURS        = int(os.environ["CB_HOURS"])
+    FEE_RATE        = float(os.environ["FEE_RATE"])
+    CANDLES_NEEDED  = int(os.environ["CANDLES_NEEDED"])
+    WARMUP          = int(os.environ["WARMUP"])
 
-# ── LOCKED strategy parameters ───────────────────────────────────
-# Defaults are the values fixed across 20 backtests (Sep 2019 → Mar 2026).
-# Overridable via .env — but changing any value invalidates backtest results.
-SYMBOL          = os.getenv("SYMBOL",         "BTC/USDT")
-TIMEFRAME       = os.getenv("TIMEFRAME",      "15m")
-CANDLE_MINUTES  = int(os.getenv("CANDLE_MINUTES",  "15"))
-LONG_ATR_MULT   = float(os.getenv("LONG_ATR_MULT",  "2.0"))
-SHORT_ATR_MULT  = float(os.getenv("SHORT_ATR_MULT", "1.5"))
-RSI_LEN         = int(os.getenv("RSI_LEN",         "14"))
-MACD_FAST       = int(os.getenv("MACD_FAST",        "12"))
-MACD_SLOW       = int(os.getenv("MACD_SLOW",        "26"))
-MACD_SIGNAL_WIN = int(os.getenv("MACD_SIGNAL_WIN",  "9"))
-VOL_MULT        = float(os.getenv("VOL_MULT",       "2.0"))
-VOL_SMA_PERIOD  = int(os.getenv("VOL_SMA_PERIOD",   "20"))
-ATR_PERIOD      = int(os.getenv("ATR_PERIOD",       "14"))
-DIV_WINDOW      = int(os.getenv("DIV_WINDOW",       "5"))
-DIV_SHIFT       = int(os.getenv("DIV_SHIFT",        "5"))
-DIV_MEMORY      = int(os.getenv("DIV_MEMORY",       "3"))
-CB_TRIGGER      = int(os.getenv("CB_TRIGGER",       "5"))
-CB_HOURS        = int(os.getenv("CB_HOURS",         "48"))
-FEE_RATE        = float(os.getenv("FEE_RATE",       "0.0005"))
-CANDLES_NEEDED  = int(os.getenv("CANDLES_NEEDED",   "200"))
-WARMUP          = int(os.getenv("WARMUP",           "50"))
+except KeyError as e:
+    # If any variable above is missing from the .env, the bot safely stops
+    raise RuntimeError(f"CRITICAL: Missing environment variable {e}. Please update your .env file.")
 
 # ── Files — all written to DATA_DIR (shared Docker volume) ────────
 DATA_DIR         = os.getenv("DATA_DIR", ".")
