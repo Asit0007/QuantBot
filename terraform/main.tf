@@ -1,7 +1,7 @@
 # terraform/main.tf — Oracle Cloud Always-Free ARM instance for QuantBot
 # ════════════════════════════════════════════════════════════════════
 # Free tier used:
-#   VM.Standard.A1.Flex  — 4 OCPU, 24 GB RAM  (ARM, always free)
+#   VM.Standard.A1.Flex  — 1/4 OCPU, 6/24 GB RAM  (ARM, always free)
 #   Block Volume 50 GB   (always free)
 #   VCN + subnet + IGW   (always free)
 #
