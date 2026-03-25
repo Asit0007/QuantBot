@@ -76,7 +76,7 @@ jobs:
           username: ${{ secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_KEY }}
           script: |
-            POS=$(sudo docker exec quantbot_bot python3 -c "
+            POS=$(docker exec quantbot_bot python3 -c "
             import json, os
             try:
                 s = json.load(open(os.environ['DATA_DIR']+'/bot_state.json'))
@@ -97,7 +97,7 @@ jobs:
           host: ${{ secrets.ORACLE_HOST }}
           username: ${{ secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_KEY }}
-          source: "."
+          source: "bot.py,corpus_manager.py,dashboard.py,notifier.py,requirements.txt,Dockerfile,docker-compose.yml,.env.example,.gitignore,nginx/nginx.conf"
           target: "~/quantbot"
           overwrite: true
 
@@ -112,37 +112,51 @@ jobs:
             set -e
             cd ~/quantbot
 
+            # Ensure .env exists (never overwritten by CI)
+            if [ ! -f .env ]; then
+              echo "WARNING: .env not found — copy .env.example to .env and fill in values"
+              exit 1
+            fi
+
             # Full rebuild if Dockerfile / requirements / compose / nginx changed
             if [ "${{ steps.changes.outputs.infra }}" = "true" ]; then
               echo "Infrastructure changed — full rebuild..."
-              sudo docker compose build && sudo docker compose up -d
+              docker compose build && docker compose up -d
               echo "Full rebuild complete"; exit 0
             fi
 
             RESTARTED=""
 
             if [ "${{ steps.changes.outputs.dashboard }}" = "true" ]; then
-              sudo docker compose up -d --no-deps --build dashboard
+              docker compose up -d --no-deps --build dashboard
               RESTARTED="$RESTARTED dashboard"
             fi
 
             if [ "${{ steps.changes.outputs.notifier }}" = "true" ]; then
-              sudo docker compose up -d --no-deps --build notifier
+              docker compose up -d --no-deps --build notifier
               RESTARTED="$RESTARTED notifier"
             fi
 
             if [ "${{ steps.changes.outputs.bot }}" = "true" ]; then
               POS=$(cat /tmp/quantbot_position_status 2>/dev/null || echo "none")
               if [ "$POS" != "open" ]; then
-                sudo docker compose up -d --no-deps --build bot
+                docker compose up -d --no-deps --build bot
                 RESTARTED="$RESTARTED bot"
               else
                 echo "Skipping bot restart — open position detected"
               fi
             fi
 
+            # First deploy — start everything if nothing is running
+            RUNNING=$(docker compose ps --services --filter status=running 2>/dev/null | wc -l)
+            if [ "$RUNNING" -eq 0 ]; then
+              echo "No containers running — starting all services..."
+              docker compose up -d --build
+              RESTARTED="all"
+            fi
+
             [ -z "$RESTARTED" ] && echo "No service restarts needed" || echo "Restarted:$RESTARTED"
-            sudo docker compose ps
+            docker compose ps
 
       # Verify all containers are still running after deploy
       - name: Health check
@@ -155,10 +169,10 @@ jobs:
             sleep 8
             FAILED=0
             for svc in bot notifier dashboard; do
-              STATUS=$(sudo docker inspect --format='{{.State.Status}}' quantbot_$svc 2>/dev/null || echo "missing")
+              STATUS=$(docker inspect --format='{{.State.Status}}' quantbot_$svc 2>/dev/null || echo "missing")
               if [ "$STATUS" != "running" ]; then
                 echo "FAILED: $svc is $STATUS"
-                sudo docker compose -f ~/quantbot/docker-compose.yml logs $svc --tail=30
+                docker compose -f ~/quantbot/docker-compose.yml logs $svc --tail=30
                 FAILED=1
               else
                 echo "OK: $svc running"
