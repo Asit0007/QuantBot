@@ -121,21 +121,39 @@ resource "oci_core_subnet" "public_subnet" {
   prohibit_public_ip_on_vnic = false
 }
 
+# ── OS Image Dynamic Lookup (Regex Fallback) ──────────────────────
+data "oci_core_images" "ubuntu_arm_image" {
+  compartment_id   = var.compartment_ocid
+  operating_system = "Canonical Ubuntu"
+  shape            = "VM.Standard.A1.Flex"
+  sort_by          = "TIMECREATED"
+  sort_order       = "DESC"
+
+  # Uses regex to catch any 22.04 ARM image (Standard or Minimal)
+  filter {
+    name   = "display_name"
+    values = ["^.*Ubuntu-22\\.04.*aarch64.*$"]
+    regex  = true
+  }
+}
+
 # ── Compute — VM.Standard.A1.Flex (ARM, always free) ─────────────
 resource "oci_core_instance" "quantbot_vm" {
   compartment_id      = var.compartment_ocid
   availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
+    # If you get "Out of host capacity", try index [1] or [2]:
   display_name        = "quantbot-server"
   shape               = "VM.Standard.A1.Flex"
 
   shape_config {
-    ocpus         = 2      # 2 of 4 free OCPUs
-    memory_in_gbs = 12     # 12 of 24 free GB
+    ocpus         = 1      # 2 of 4 free OCPUs
+    memory_in_gbs = 6     # 12 of 24 free GB
+    # Scale up to ocpus=2, memory_in_gbs=12 by recreating VM when capacity allows
   }
 
   source_details {
     source_type             = "image"
-    source_id               = var.vm_image_ocid
+    source_id               = data.oci_core_images.ubuntu_arm_image.images[0].id
     boot_volume_size_in_gbs = 50   # free tier allows 50 GB
   }
 
