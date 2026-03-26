@@ -1,9 +1,5 @@
-version: "3.9"
-
 # One shared volume for all state files.
 # bot.py writes → notifier.py and dashboard.py read.
-# Fixed the filename
-
 volumes:
   quantbot_data:
 
