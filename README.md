@@ -44,25 +44,25 @@ QuantBot is an end-to-end algorithmic trading and DevOps project — built from 
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Oracle Cloud (ARM VM)                         │
-│                                                                  │
+│                    Oracle Cloud (ARM VM)                        │
+│                                                                 │
 │  ┌─────────────┐    shared volume     ┌──────────────────────┐  │
 │  │   bot.py    │ ──bot_state.json──▶  │    notifier.py       │  │
 │  │  (Trading)  │ ──trade_log.csv───▶  │  (Telegram Alerts)   │  │
 │  │             │ ──rsi_history.json─▶ │                      │  │
 │  └─────────────┘                      └──────────────────────┘  │
 │         │               quantbot_data                           │
-│         │               (Docker volume)                          │
-│         ▼                      ▲                                 │
+│         │               (Docker volume)                         │
+│         ▼                      ▲                                │
 │  ┌─────────────┐               │         ┌──────────────────┐   │
 │  │corpus_mgr   │               └─────────│   dashboard.py   │   │
 │  │  (DCA &     │                         │  (Plotly Dash)   │   │
 │  │  Ratchet)   │                         │  port 8050       │   │
 │  └─────────────┘                         └────────┬─────────┘   │
-│                                                    │             │
+│                                                    │            │
 │                                          ┌─────────▼─────────┐  │
-│                                          │      nginx         │  │
-│                                          │   (port 8888)      │  │
+│                                          │      nginx        │  │
+│                                          │   (port 8888)     │  │
 │                                          └─────────┬─────────┘  │
 └────────────────────────────────────────────────────┼────────────┘
                                                       │
