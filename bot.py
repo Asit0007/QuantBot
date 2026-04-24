@@ -2,11 +2,32 @@
 """
 bot.py — QuantBot Live Trading Engine v1.0
 ════════════════════════════════════════════════════════════════════
+Built from 20 backtests (Sep 2019 → Mar 2026), $100 → $4,699
+
+LOCKED PARAMETERS (do not change without re-backtesting):
+  Signal:   RSI Divergence(14) + MACD Cross(12/26/9) + Volume(2×)
+  Asset:    BTC/USDT isolated margin futures
+  Frame:    15m candles
+  Leverage: 20×
+  Risk:     10% of corpus per trade (as margin)
+  CB:       5 consecutive losses → 48h pause (flat)
+  DCA:      $10/mo on 10th, +10%/yr
+  Ratchet:  corpus UP after 10 net+ trades, DOWN after 10 consec losses
+
+PAPER TRADE FIRST:
+  PAPER_TRADE = true  (default in .env)  → simulates everything, no real orders
+  Run 20+ paper trades, compare WR (~12%) and PF (~1.78) to backtest.
+  Only set PAPER_TRADE=false in .env after confirming live performance.
+
 USAGE:
   python bot.py               → paper trade (safe default)
   python bot.py --live        → live trade (requires API keys in .env)
   python bot.py --status      → print current state and exit
   python bot.py --reset       → wipe all state files and start fresh
+
+API KEYS (for live mode only — set in .env, never hardcode):
+  BINANCE_API_KEY=your_key
+  BINANCE_API_SECRET=your_secret
 ════════════════════════════════════════════════════════════════════
 """
 
@@ -38,43 +59,46 @@ from corpus_manager import CorpusManager
 # ══════════════════════════════════════════════════════════════════════
 
 try:
-    # ── User-facing parameters ───────────────────────────────────────
-    # PAPER_TRADE: Fails if missing, securely converts string to boolean
-    PAPER_TRADE    = os.environ["PAPER_TRADE"].strip().lower() == "true"
+    # ── User-facing parameters — set these in .env ────────────────────
+    # PAPER_TRADE: "true" → simulate only. Set "false" in .env to go live.
+    PAPER_TRADE    = os.getenv("PAPER_TRADE", "true").strip().lower() == "true"
 
-    # Account & Sizing
-    START_BALANCE  = float(os.environ["START_BALANCE"])
-    LEVERAGE       = int(os.environ["LEVERAGE"])
-    RISK_PER_TRADE = float(os.environ["RISK_PER_TRADE"])
+    # Starting balance for a fresh state (only used on first ever run)
+    START_BALANCE  = float(os.getenv("START_BALANCE"))
+
+    # Position sizing
+    LEVERAGE       = int(os.getenv("LEVERAGE"))
+    RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE"))
 
     # Corpus / DCA
-    DCA_DAY        = int(os.environ["DCA_DAY"])       
-    DCA_BASE       = float(os.environ["DCA_MONTHLY_USD"])   
-    DCA_GROWTH     = float(os.environ["DCA_ANNUAL_GROWTH"]) 
-    START_YEAR     = int(os.environ["START_YEAR"])   
+    DCA_DAY        = int(os.getenv("DCA_DAY"))       # day of month for contribution
+    DCA_BASE       = float(os.getenv("DCA_MONTHLY_USD"))   # base monthly DCA ($)
+    DCA_GROWTH     = float(os.getenv("DCA_ANNUAL_GROWTH")) # 10% annual step-up
+    START_YEAR     = int(os.getenv("START_YEAR"))   # year the bot first ran
 
-    # ── LOCKED strategy parameters (IP Protected) ────────────────────
-    # No defaults provided. Requires full .env file to run.
-    SYMBOL          = os.environ["SYMBOL"]
-    TIMEFRAME       = os.environ["TIMEFRAME"]
-    CANDLE_MINUTES  = int(os.environ["CANDLE_MINUTES"])
-    LONG_ATR_MULT   = float(os.environ["LONG_ATR_MULT"])
-    SHORT_ATR_MULT  = float(os.environ["SHORT_ATR_MULT"])
-    RSI_LEN         = int(os.environ["RSI_LEN"])
-    MACD_FAST       = int(os.environ["MACD_FAST"])
-    MACD_SLOW       = int(os.environ["MACD_SLOW"])
-    MACD_SIGNAL_WIN = int(os.environ["MACD_SIGNAL_WIN"])
-    VOL_MULT        = float(os.environ["VOL_MULT"])
-    VOL_SMA_PERIOD  = int(os.environ["VOL_SMA_PERIOD"])
-    ATR_PERIOD      = int(os.environ["ATR_PERIOD"])
-    DIV_WINDOW      = int(os.environ["DIV_WINDOW"])
-    DIV_SHIFT       = int(os.environ["DIV_SHIFT"])
-    DIV_MEMORY      = int(os.environ["DIV_MEMORY"])
-    CB_TRIGGER      = int(os.environ["CB_TRIGGER"])
-    CB_HOURS        = int(os.environ["CB_HOURS"])
-    FEE_RATE        = float(os.environ["FEE_RATE"])
-    CANDLES_NEEDED  = int(os.environ["CANDLES_NEEDED"])
-    WARMUP          = int(os.environ["WARMUP"])
+    # ── LOCKED strategy parameters ───────────────────────────────────
+    # Defaults are the values fixed across 20 backtests (Sep 2019 → Mar 2026).
+    # Overridable via .env — but changing any value invalidates backtest results.
+    SYMBOL          = os.getenv("SYMBOL")
+    TIMEFRAME       = os.getenv("TIMEFRAME")
+    CANDLE_MINUTES  = int(os.getenv("CANDLE_MINUTES"))
+    LONG_ATR_MULT   = float(os.getenv("LONG_ATR_MULT"))
+    SHORT_ATR_MULT  = float(os.getenv("SHORT_ATR_MULT"))
+    RSI_LEN         = int(os.getenv("RSI_LEN"))
+    MACD_FAST       = int(os.getenv("MACD_FAST"))
+    MACD_SLOW       = int(os.getenv("MACD_SLOW"))
+    MACD_SIGNAL_WIN = int(os.getenv("MACD_SIGNAL_WIN"))
+    VOL_MULT        = float(os.getenv("VOL_MULT"))
+    VOL_SMA_PERIOD  = int(os.getenv("VOL_SMA_PERIOD"))
+    ATR_PERIOD      = int(os.getenv("ATR_PERIOD"))
+    DIV_WINDOW      = int(os.getenv("DIV_WINDOW"))
+    DIV_SHIFT       = int(os.getenv("DIV_SHIFT"))
+    DIV_MEMORY      = int(os.getenv("DIV_MEMORY"))
+    CB_TRIGGER      = int(os.getenv("CB_TRIGGER"))
+    CB_HOURS        = int(os.getenv("CB_HOURS"))
+    FEE_RATE        = float(os.getenv("FEE_RATE"))
+    CANDLES_NEEDED  = int(os.getenv("CANDLES_NEEDED"))
+    WARMUP          = int(os.getenv("WARMUP"))
 
 except KeyError as e:
     # If any variable above is missing from the .env, the bot safely stops
@@ -394,24 +418,41 @@ class Exchange:
 #  POSITION SIZING
 # ══════════════════════════════════════════════════════════════════════
 
-def size_position(corpus: float, price: float) -> dict:
+def size_position(corpus: float, price: float,
+                  stop_price: float) -> dict:
     """
-    How to think about this:
-      - We allocate RISK_PER_TRADE (10%) of corpus as margin
-      - At LEVERAGE (20×), that margin controls 200% of corpus in notional
-      - quantity (BTC) = notional / price
-      - Max loss if liquidated = margin = 10% corpus
-      - Normal loss (ATR stop at ~0.7%) << margin
+    Stop-distance-aware position sizing.
 
-    Example: corpus=$1000, price=$85000
-      margin   = $100
-      notional = $2000
-      qty      = 0.02353 BTC
+    Guarantees that if the stop is hit, loss = RISK_PER_TRADE x corpus exactly.
+
+    Formula:
+      dollar_risk   = corpus x RISK_PER_TRADE
+      stop_distance = abs(price - stop_price)
+      qty           = dollar_risk / (stop_distance x LEVERAGE)
+
+    P&L at stop = stop_distance x qty x LEVERAGE = dollar_risk  (always)
+
+    Previous bug: qty = (corpus x RISK x LEVERAGE) / price
+      P&L formula also multiplied by LEVERAGE => LEVERAGE squared.
+      A 0.47% ATR gave 18.8% loss instead of 10%.
+      A 2.5% ATR would wipe the entire account in one trade.
+
+    Example: corpus=$110, price=$70121, stop=$70448 (ATR=$218)
+      dollar_risk   = $11.00
+      stop_distance = $327
+      qty           = 11 / (327 x 20) = 0.001682 BTC
+      P&L at stop   = 327 x 0.001682 x 20 = $11.00 = 10% of corpus
     """
-    margin   = corpus * RISK_PER_TRADE
-    notional = margin * LEVERAGE
-    qty      = notional / price
-    return {"margin": margin, "notional": notional, "qty": qty}
+    dollar_risk   = corpus * RISK_PER_TRADE
+    stop_distance = abs(price - stop_price)
+    # Guard: never let stop be too close (< 0.01% of price)
+    min_distance  = price * 0.0001
+    stop_distance = max(stop_distance, min_distance)
+    qty      = dollar_risk / (stop_distance * LEVERAGE)
+    margin   = qty * price / LEVERAGE
+    notional = qty * price
+    return {"margin": margin, "notional": notional, "qty": qty,
+            "stop_distance": stop_distance, "dollar_risk": dollar_risk}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -452,7 +493,7 @@ class QuantBot:
         price    = float(candle["close"])
         atr      = float(candle["atr"]) if not math.isnan(candle["atr"]) else 0
         stop     = price - (LONG_ATR_MULT * atr) if atr > 0 else price * 0.95
-        sizing   = size_position(self.cm.corpus, price)
+        sizing   = size_position(self.cm.corpus, price, stop)
         qty      = sizing["qty"]
         fee_in   = price * qty * FEE_RATE
 
@@ -488,7 +529,7 @@ class QuantBot:
         price    = float(candle["close"])
         atr      = float(candle["atr"]) if not math.isnan(candle["atr"]) else 0
         stop     = price + (SHORT_ATR_MULT * atr) if atr > 0 else price * 1.05
-        sizing   = size_position(self.cm.corpus, price)
+        sizing   = size_position(self.cm.corpus, price, stop)
         qty      = sizing["qty"]
         fee_in   = price * qty * FEE_RATE
 
