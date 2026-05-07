@@ -173,7 +173,13 @@ def calc_metrics(trades: pd.DataFrame, state: dict, corpus: dict) -> dict:
     else:
         m["uptime"], m["years"] = "—", 1.0
 
-    m["annual"] = m["ret_pct"] / m["years"] if m["years"] > 0 else 0
+    # Only annualise when we have enough data to make it meaningful
+    # < 20 trades or < 30 days → too early, suppress annualisation
+    days_running = m["years"] * 365.25
+    if m["years"] > 0 and days_running >= 30 and m["n_trades"] >= 5:
+        m["annual"] = m["ret_pct"] / m["years"]
+    else:
+        m["annual"] = 0.0   # suppress — not enough data yet
 
     # defaults
     for k in ["pf","sharpe","sortino","max_dd","calmar",
@@ -239,8 +245,17 @@ def chart_equity(trades: pd.DataFrame, state: dict) -> go.Figure:
     f = go.Figure()
     if not trades.empty and "balance" in trades.columns:
         df = trades.sort_values("datetime")
+        # Prepend a starting point so the chart shows the full journey
+        # Use first trade date minus estimated time to give a real x-axis
+        start_bal = state.get("start_balance", 100.0)
+        first_dt  = df["datetime"].iloc[0]
+        # Create a synthetic start point 1 day before first trade
+        from datetime import timedelta
+        start_dt  = first_dt - timedelta(hours=24)
+        x_vals = [start_dt] + df["datetime"].tolist()
+        y_vals = [start_bal] + df["balance"].tolist()
         f.add_trace(go.Scatter(
-            x=df["datetime"], y=df["balance"], mode="lines",
+            x=x_vals, y=y_vals, mode="lines",
             line=dict(color=BLU, width=2), fill="tozeroy",
             fillcolor="rgba(88,166,255,0.08)", name="Balance"))
         if "pnl_usd" in df.columns:
@@ -266,7 +281,10 @@ def chart_drawdown(trades: pd.DataFrame, start_bal: float) -> go.Figure:
         eq   = np.concatenate([[start_bal], df["balance"].values])
         pk   = np.maximum.accumulate(eq)
         dd   = (pk - eq) / np.where(pk == 0, 1, pk) * 100
-        dts  = [None] + df["datetime"].tolist()
+        # Use the actual first trade date minus a small offset as t=0
+        # Never use None — Plotly converts None to epoch causing wrong x-axis
+        first_dt = df["datetime"].iloc[0]
+        dts  = [first_dt] + df["datetime"].tolist()
         f.add_trace(go.Scatter(x=dts, y=-dd, mode="lines", fill="tozeroy",
             fillcolor="rgba(248,81,73,0.12)", line=dict(color=RED, width=1.5),
             showlegend=False))
@@ -414,7 +432,7 @@ app.layout = html.Div([
         }),
         html.Span("  ·  ", style={"color": BRD}),
         html.Span("Trained on caffeine. Powered by backtest.", style={
-            "color": MUTED, "fontSize": "10px"
+            "color": MUTED, "fontStyle": "italic"
         }),
         html.Span("  ·  ", style={"color": BRD}),
         html.Span("Not financial advice. Just vibes and RSI divergence.", style={
@@ -440,7 +458,7 @@ def render_tab(tab):
         return html.Div([
             # Current readings gauges
             html.Div([
-                html.Div("Current RSI Readings", style={
+                html.Div("CURRENT RSI READINGS  —  Macro Timeframes", style={
                     "color": MUTED, "fontSize": "10px", "textTransform": "uppercase",
                     "letterSpacing": "1px", "marginBottom": "12px"}),
                 html.Div(id="rsi-gauges",
@@ -449,7 +467,7 @@ def render_tab(tab):
 
             # Extreme events table
             html.Div([
-                html.Div("RSI Extreme Events  (< 20 oversold  |  > 80 overbought)",
+                html.Div("RSI EXTREMES & NEAREST THRESHOLD",
                          style={"color": MUTED, "fontSize": "10px", "textTransform": "uppercase",
                                 "letterSpacing": "1px", "marginBottom": "12px"}),
                 html.Div(id="rsi-extremes-tbl"),
@@ -457,7 +475,7 @@ def render_tab(tab):
 
             # RSI over time line chart
             html.Div([
-                html.Div("RSI History by Coin", style={
+                html.Div("RSI HISTORY  —  last updated values shown in legend", style={
                     "color": MUTED, "fontSize": "10px", "textTransform": "uppercase",
                     "letterSpacing": "1px", "marginBottom": "12px"}),
                 dcc.Graph(id="rsi-chart", config={"displayModeBar": False}),
@@ -539,7 +557,8 @@ def refresh(_):
             kpi("Net Profit",   f"${m['net_pnl']:+,.2f}",
                 f"invested ${m['total_inv']:.2f}", dcol(m["net_pnl"])),
             kpi("Total Return", f"{m['ret_pct']:+.1f}%",
-                f"{m['annual']:+.1f}% / yr", dcol(m["ret_pct"])),
+                (f"{m['annual']:+.1f}% / yr" if m['annual'] != 0.0 or m['n_trades'] >= 5
+                 else "N/A (< 5 trades)"), dcol(m["ret_pct"])),
             kpi("Corpus",       f"${m['corpus']:,.2f}",
                 f"DCA ${corpus.get('total_dca_added',0):.2f} added"),
             kpi("Trades",       str(m["n_trades"]),
@@ -687,154 +706,300 @@ def refresh(_):
 )
 def refresh_rsi(_):
     empty_fig = go.Figure().update_layout(**PLBASE)
-    no_data   = html.Div("No RSI history yet — notifier runs its first scan a few minutes after startup.",
-                         style={"color": MUTED, "padding": "24px", "background": SURF,
-                                "borderRadius": "8px", "border": f"1px solid {BRD}",
-                                "textAlign": "center"})
+    no_data   = html.Div(
+        "No RSI history yet — notifier scans every 4 hours after startup.",
+        style={"color": MUTED, "padding": "24px", "background": SURF,
+               "borderRadius": "8px", "border": f"1px solid {BRD}",
+               "textAlign": "center"})
     try:
         df = load_rsi_history()
         if df.empty:
             return [], no_data, empty_fig
 
-        # ── 1. GAUGES — latest reading per coin ───────────────────
-        latest = df.groupby("coin").tail(1).reset_index(drop=True)
-        gauges  = []
+        # Sort by timestamp — ensure chronological order always
+        df = df.sort_values("ts").reset_index(drop=True)
+
+        COIN_COLORS = {
+            "BTC": "#F7931A", "ETH": "#627EEA", "SOL": "#9945FF",
+            "BNB": "#F3BA2F", "XRP": "#00AAE4", "SUI": "#4DA2FF",
+        }
+        DEFAULT_COLORS = ["#58a6ff","#3fb950","#f85149","#d29922","#bc8cff","#ff7b72"]
+
+        # ── 1. GAUGES — one card per coin ─────────────────────────
+        latest = df.groupby("coin").last().reset_index()
+        # sort by RSI ascending — most oversold first
+        latest = latest.sort_values("rsi").reset_index(drop=True)
+        gauges = []
         for _, row in latest.iterrows():
-            rsi   = row["rsi"]
-            coin  = row["coin"]
-            tf    = row["tf"]
-            zone  = row["zone"]
-            ts    = row["ts"]
+            rsi  = row["rsi"]
+            coin = row["coin"]
+            tf   = row["tf"]
+            zone = row["zone"]
+            ts   = row["ts"]
+
+            # Distance from extremes — for the mini progress bar
+            dist_oversold   = rsi - 20           # 0 = at oversold
+            dist_overbought = 80 - rsi           # 0 = at overbought
+            closest_dist    = min(dist_oversold, dist_overbought)
+            pct_to_extreme  = max(0, min(100, (1 - closest_dist / 50) * 100))
 
             if zone == "oversold":
-                border_color = GRN
-                badge_bg     = "#0d2818"
-                badge_txt    = "OVERSOLD 🟢"
+                border  = GRN;  badge_bg = "#0d2818"; badge_txt = "OVERSOLD 🟢"
             elif zone == "overbought":
-                border_color = RED
-                badge_bg     = "#2d0f0f"
-                badge_txt    = "OVERBOUGHT 🔴"
+                border  = RED;  badge_bg = "#2d0f0f"; badge_txt = "OVERBOUGHT 🔴"
             else:
-                border_color = BRD
-                badge_bg     = SURF
-                badge_txt    = "Neutral"
+                border  = BRD;  badge_bg = SURF;      badge_txt = "Neutral"
 
-            # colour the RSI number itself
-            if rsi <= 30:
-                rsi_color = GRN
-            elif rsi >= 70:
-                rsi_color = RED
-            elif rsi <= 40 or rsi >= 60:
-                rsi_color = YLW
-            else:
-                rsi_color = TXT
+            rsi_color = (GRN if rsi <= 30 else
+                         RED if rsi >= 70 else
+                         YLW if (rsi <= 40 or rsi >= 60) else TXT)
+
+            coin_color = COIN_COLORS.get(coin, "#58a6ff")
+
+            # Format timestamp to be short: "07 May 06:49"
+            try:
+                from datetime import datetime
+                ts_obj = datetime.fromisoformat(ts.replace("UTC","").strip())
+                ts_fmt = ts_obj.strftime("%d %b %H:%M")
+            except Exception:
+                ts_fmt = ts[:16] if len(str(ts)) >= 16 else str(ts)
 
             gauges.append(html.Div([
-                html.Div(coin, style={"fontWeight": "700", "fontSize": "15px",
-                                      "marginBottom": "4px"}),
-                html.Div(f"{tf}", style={"color": MUTED, "fontSize": "10px",
-                                          "marginBottom": "8px"}),
-                html.Div(f"{rsi:.1f}", style={"fontSize": "32px", "fontWeight": "800",
-                                               "color": rsi_color, "lineHeight": "1"}),
-                html.Div("RSI", style={"color": MUTED, "fontSize": "10px",
-                                       "marginBottom": "8px"}),
-                html.Div(badge_txt, style={"fontSize": "10px", "padding": "3px 8px",
-                                           "background": badge_bg, "borderRadius": "4px",
-                                           "color": border_color, "fontWeight": "600",
-                                           "marginBottom": "8px"}),
-                html.Div(ts, style={"color": MUTED, "fontSize": "9px"}),
+                # Coin name with colored dot
+                html.Div([
+                    html.Span("●", style={"color": coin_color, "marginRight": "6px",
+                                          "fontSize": "12px"}),
+                    html.Span(coin, style={"fontWeight": "700", "fontSize": "15px"}),
+                ], style={"marginBottom": "2px"}),
+                html.Div(tf, style={"color": MUTED, "fontSize": "10px",
+                                    "marginBottom": "10px", "letterSpacing": "0.5px"}),
+                # Large RSI number
+                html.Div(f"{rsi:.1f}", style={
+                    "fontSize": "36px", "fontWeight": "800",
+                    "color": rsi_color, "lineHeight": "1", "marginBottom": "2px",
+                }),
+                html.Div("RSI", style={"color": MUTED, "fontSize": "9px",
+                                       "marginBottom": "8px", "letterSpacing": "2px"}),
+                # Status badge
+                html.Div(badge_txt, style={
+                    "fontSize": "10px", "padding": "3px 10px",
+                    "background": badge_bg, "borderRadius": "20px",
+                    "color": border, "fontWeight": "700", "marginBottom": "10px",
+                    "display": "inline-block",
+                }),
+                # Progress bar showing proximity to extreme
+                html.Div([
+                    html.Div(style={
+                        "height": "3px",
+                        "width": f"{pct_to_extreme:.0f}%",
+                        "background": (RED if rsi >= 60 else GRN if rsi <= 40 else BRD),
+                        "borderRadius": "2px",
+                        "transition": "width 0.5s",
+                    })
+                ], style={"background": "#1a1a2e", "borderRadius": "2px",
+                           "marginBottom": "8px", "height": "3px"}),
+                html.Div([
+                    html.Span("20", style={"color": GRN, "fontSize": "8px"}),
+                    html.Span("  ─────  ", style={"color": BRD, "fontSize": "8px"}),
+                    html.Span("80", style={"color": RED, "fontSize": "8px"}),
+                ], style={"marginBottom": "6px"}),
+                # Last updated
+                html.Div(ts_fmt, style={"color": MUTED, "fontSize": "9px"}),
             ], style={
-                "background": SURF, "border": f"1px solid {border_color}",
-                "borderRadius": "10px", "padding": "16px 20px",
-                "minWidth": "130px", "textAlign": "center",
+                "background": SURF,
+                "border": f"2px solid {border}",
+                "borderRadius": "12px",
+                "padding": "16px 18px",
+                "minWidth": "140px",
+                "textAlign": "center",
+                "transition": "border-color 0.3s",
             }))
 
-        # ── 2. EXTREMES TABLE — all readings < 20 or > 80 ────────
-        extremes = df[df["zone"].isin(["oversold", "overbought"])].copy()
+        # ── 2. EXTREMES / NEAREST TABLE ───────────────────────────
+        extremes = df[df["zone"].isin(["oversold","overbought"])].copy()
         extremes = extremes.sort_values("ts", ascending=False).reset_index(drop=True)
 
         if extremes.empty:
-            extremes_section = html.Div(
-                "No RSI extremes recorded yet — thresholds are < 20 (oversold) and > 80 (overbought).",
-                style={"color": MUTED, "padding": "20px", "background": SURF,
-                       "borderRadius": "8px", "border": f"1px solid {BRD}",
-                       "textAlign": "center", "fontSize": "13px"})
+            # Show "nearest to extreme" instead of just empty message
+            # Find the 3 coins closest to an extreme right now
+            latest_for_near = df.groupby("coin").last().reset_index()
+            latest_for_near["dist_to_extreme"] = latest_for_near["rsi"].apply(
+                lambda r: min(r - 20, 80 - r)
+            )
+            nearest = latest_for_near.sort_values("dist_to_extreme").head(3)
+
+            near_rows = []
+            for _, r in nearest.iterrows():
+                dist = r["dist_to_extreme"]
+                closer_to = "Oversold" if r["rsi"] < 50 else "Overbought"
+                c = COIN_COLORS.get(r["coin"], "#58a6ff")
+                near_rows.append(html.Tr([
+                    html.Td([
+                        html.Span("●", style={"color": c, "marginRight": "6px"}),
+                        html.Span(r["coin"], style={"fontWeight": "700"}),
+                    ], style={"padding": "10px 14px"}),
+                    html.Td(r["tf"], style={"color": MUTED, "padding": "10px 14px",
+                                             "fontSize": "12px"}),
+                    html.Td(f"{r['rsi']:.1f}", style={
+                        "color": (GRN if r["rsi"] < 50 else RED),
+                        "fontWeight": "700", "padding": "10px 14px",
+                        "textAlign": "right", "fontFamily": "monospace",
+                    }),
+                    html.Td(f"${r['price']:,.2f}", style={
+                        "color": TXT, "padding": "10px 14px",
+                        "textAlign": "right", "fontFamily": "monospace",
+                    }),
+                    html.Td(closer_to, style={
+                        "color": (GRN if closer_to == "Oversold" else RED),
+                        "padding": "10px 14px", "fontSize": "11px",
+                    }),
+                    html.Td(f"{dist:.1f} pts away", style={
+                        "color": MUTED, "padding": "10px 14px", "fontSize": "11px",
+                    }),
+                ]))
+
+            extremes_section = html.Div([
+                html.Div("No extremes yet (< 20 or > 80) — showing coins nearest to a threshold:",
+                         style={"color": MUTED, "fontSize": "11px",
+                                "marginBottom": "8px", "padding": "0 4px"}),
+                html.Table(
+                    [html.Thead(html.Tr([
+                        html.Th(h, style={
+                            "color": MUTED, "padding": "8px 14px", "fontSize": "10px",
+                            "textTransform": "uppercase", "letterSpacing": "1px",
+                            "textAlign": "left" if i < 2 else "right",
+                            "borderBottom": f"1px solid {BRD}", "fontWeight": "500",
+                        })
+                        for i, h in enumerate(["Coin","Timeframe","RSI","Price","Direction","Distance"])
+                    ])),
+                    html.Tbody(near_rows)],
+                    style={"width": "100%", "borderCollapse": "collapse",
+                           "background": SURF, "borderRadius": "8px",
+                           "border": f"1px solid {BRD}"}
+                )
+            ])
         else:
             rows = []
             for _, r in extremes.iterrows():
-                is_os   = r["zone"] == "oversold"
-                z_color = GRN if is_os else RED
+                is_os  = r["zone"] == "oversold"
+                zcolor = GRN if is_os else RED
+                c = COIN_COLORS.get(r["coin"], "#58a6ff")
+                try:
+                    ts_obj = datetime.fromisoformat(r["ts"].replace("UTC","").strip())
+                    ts_fmt = ts_obj.strftime("%d %b %Y %H:%M")
+                except Exception:
+                    ts_fmt = str(r["ts"])[:16]
                 rows.append(html.Tr([
-                    html.Td(r["ts"],
-                            style={"color": MUTED,   "padding": "8px 14px", "fontSize": "12px"}),
-                    html.Td(r["coin"],
-                            style={"fontWeight": "700", "padding": "8px 14px"}),
-                    html.Td(r["tf"],
-                            style={"color": MUTED,   "padding": "8px 14px"}),
-                    html.Td(f"{r['rsi']:.1f}",
-                            style={"color": z_color, "padding": "8px 14px",
-                                   "fontWeight": "700", "textAlign": "right"}),
+                    html.Td(ts_fmt, style={"color": MUTED, "padding": "8px 14px",
+                                           "fontSize": "12px"}),
+                    html.Td([
+                        html.Span("●", style={"color": c, "marginRight": "6px"}),
+                        html.Span(r["coin"], style={"fontWeight": "700"}),
+                    ], style={"padding": "8px 14px"}),
+                    html.Td(r["tf"], style={"color": MUTED, "padding": "8px 14px",
+                                            "fontSize": "12px"}),
+                    html.Td(f"{r['rsi']:.1f}", style={
+                        "color": zcolor, "padding": "8px 14px",
+                        "fontWeight": "700", "textAlign": "right",
+                        "fontFamily": "monospace",
+                    }),
                     html.Td("OVERSOLD 📉" if is_os else "OVERBOUGHT 📈",
-                            style={"color": z_color, "padding": "8px 14px", "fontSize": "11px"}),
-                    html.Td(f"${r['price']:,.4f}",
-                            style={"color": TXT,     "padding": "8px 14px",
+                            style={"color": zcolor, "padding": "8px 14px",
+                                   "fontSize": "11px"}),
+                    html.Td(f"${r['price']:,.2f}",
+                            style={"color": TXT, "padding": "8px 14px",
                                    "textAlign": "right", "fontFamily": "monospace"}),
                 ]))
-
             extremes_section = html.Table(
                 [html.Thead(html.Tr([
-                    html.Th(h, style={"color": MUTED, "padding": "8px 14px", "fontSize": "10px",
-                                      "textTransform": "uppercase", "letterSpacing": "1px",
-                                      "textAlign": "left", "fontWeight": "500",
-                                      "borderBottom": f"1px solid {BRD}"})
-                    for h in ["Timestamp", "Coin", "Timeframe", "RSI", "Zone", "Price"]
+                    html.Th(h, style={
+                        "color": MUTED, "padding": "8px 14px", "fontSize": "10px",
+                        "textTransform": "uppercase", "letterSpacing": "1px",
+                        "textAlign": "left", "fontWeight": "500",
+                        "borderBottom": f"1px solid {BRD}",
+                    })
+                    for h in ["Timestamp","Coin","Timeframe","RSI","Zone","Price"]
                 ])),
-                 html.Tbody(rows)],
+                html.Tbody(rows)],
                 style={"width": "100%", "borderCollapse": "collapse",
                        "background": SURF, "borderRadius": "8px",
                        "border": f"1px solid {BRD}"}
             )
 
-        # ── 3. LINE CHART — RSI over time per coin ────────────────
+        # ── 3. CLEAN LINE CHART ────────────────────────────────────
         fig = go.Figure()
 
-        # Oversold / overbought reference bands
-        fig.add_hrect(y0=0,  y1=20, fillcolor=GRN, opacity=0.06, line_width=0,
+        # Reference bands
+        fig.add_hrect(y0=0,  y1=20, fillcolor=GRN, opacity=0.07, line_width=0,
                       annotation_text="Oversold < 20", annotation_position="left",
                       annotation_font_color=GRN, annotation_font_size=10)
-        fig.add_hrect(y0=80, y1=100, fillcolor=RED, opacity=0.06, line_width=0,
+        fig.add_hrect(y0=80, y1=100, fillcolor=RED, opacity=0.07, line_width=0,
                       annotation_text="Overbought > 80", annotation_position="left",
                       annotation_font_color=RED, annotation_font_size=10)
-        fig.add_hline(y=20, line_dash="dot", line_color=GRN, line_width=1)
-        fig.add_hline(y=80, line_dash="dot", line_color=RED, line_width=1)
-        fig.add_hline(y=50, line_dash="dot", line_color=BRD, line_width=1)
+        fig.add_hline(y=20, line_dash="dot", line_color=GRN, line_width=1,
+                      opacity=0.5)
+        fig.add_hline(y=50, line_dash="dot", line_color=BRD, line_width=1,
+                      opacity=0.4)
+        fig.add_hline(y=80, line_dash="dot", line_color=RED, line_width=1,
+                      opacity=0.5)
 
-        COIN_COLORS = ["#58a6ff", "#3fb950", "#f85149", "#d29922", "#bc8cff", "#ff7b72"]
-        for i, (coin, grp) in enumerate(df.groupby("coin")):
-            grp = grp.sort_values("ts")
+        coins_ordered = ["BTC","ETH","SOL","BNB","XRP","SUI"]
+        for coin in coins_ordered:
+            grp = df[df["coin"] == coin].sort_values("ts")
+            if grp.empty:
+                continue
+            color = COIN_COLORS.get(coin, "#58a6ff")
+            latest_rsi = grp["rsi"].iloc[-1]
+            # Lines only — no markers (42 days × 6 scans/day = ~250 points = too many markers)
             fig.add_trace(go.Scatter(
-                x=grp["ts"], y=grp["rsi"],
-                name=coin,
-                mode="lines+markers",
-                line=dict(color=COIN_COLORS[i % len(COIN_COLORS)], width=2),
-                marker=dict(size=5),
+                x=grp["ts"],
+                y=grp["rsi"],
+                name=f"{coin}  {latest_rsi:.1f}",
+                mode="lines",
+                line=dict(color=color, width=2),
                 hovertemplate=(
                     f"<b>{coin}</b><br>"
-                    "RSI: %{y:.1f}<br>"
-                    "Time: %{x}<br>"
+                    "RSI: <b>%{y:.1f}</b><br>"
+                    "%{x}<br>"
                     "<extra></extra>"
-                )
+                ),
+            ))
+            # Mark only the latest point with a dot
+            fig.add_trace(go.Scatter(
+                x=[grp["ts"].iloc[-1]],
+                y=[latest_rsi],
+                mode="markers",
+                marker=dict(color=color, size=8, symbol="circle",
+                            line=dict(color=BG, width=2)),
+                showlegend=False,
+                hoverinfo="skip",
             ))
 
+        # Clean x-axis — limit tick density
         fig.update_layout(
             **PLBASE,
-            height=340,
-            yaxis=dict(range=[0, 100], gridcolor=BRD, ticksuffix="",
-                       title=dict(text="RSI", font=dict(color=MUTED, size=11))),
-            xaxis=dict(gridcolor=BRD),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                        xanchor="left", x=0, font=dict(color=MUTED, size=11)),
+            height=380,
+            yaxis=dict(
+                range=[0, 100],
+                gridcolor=BRD,
+                tickvals=[0, 20, 30, 50, 70, 80, 100],
+                title=dict(text="RSI", font=dict(color=MUTED, size=11)),
+            ),
+            xaxis=dict(
+                gridcolor=BRD,
+                nticks=10,          # max 10 date labels — no more clutter
+                tickangle=-30,      # slight angle, much more readable
+                tickformat="%d %b", # "07 May" format — clean and short
+            ),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom", y=1.02,
+                xanchor="left",   x=0,
+                font=dict(color=MUTED, size=11),
+                bgcolor="rgba(0,0,0,0)",
+            ),
             hovermode="x unified",
+            margin=dict(l=50, r=20, t=40, b=60),
         )
 
         return gauges, extremes_section, fig

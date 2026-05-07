@@ -1,7 +1,7 @@
 # terraform/main.tf — Oracle Cloud Always-Free ARM instance for QuantBot
 # ════════════════════════════════════════════════════════════════════
 # Free tier used:
-#   VM.Standard.A1.Flex  — 1/4 OCPU, 6/24 GB RAM  (ARM, always free)
+#   VM.Standard.A1.Flex  — 4 OCPU, 24 GB RAM  (ARM, always free)
 #   Block Volume 50 GB   (always free)
 #   VCN + subnet + IGW   (always free)
 #
@@ -121,40 +121,26 @@ resource "oci_core_subnet" "public_subnet" {
   prohibit_public_ip_on_vnic = false
 }
 
-# ── OS Image Dynamic Lookup (Regex Fallback) ──────────────────────
-data "oci_core_images" "ubuntu_arm_image" {
-  compartment_id   = var.compartment_ocid
-  operating_system = "Canonical Ubuntu"
-  shape            = "VM.Standard.A1.Flex"
-  sort_by          = "TIMECREATED"
-  sort_order       = "DESC"
-
-  # Uses regex to catch any 22.04 ARM image (Standard or Minimal)
-  filter {
-    name   = "display_name"
-    values = ["^.*Ubuntu-22\\.04.*aarch64.*$"]
-    regex  = true
-  }
-}
-
 # ── Compute — VM.Standard.A1.Flex (ARM, always free) ─────────────
 resource "oci_core_instance" "quantbot_vm" {
   compartment_id      = var.compartment_ocid
   availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
-    # If you get "Out of host capacity", try index [1] or [2]:
+  # If you get "Out of host capacity", try index [1] or [2]:
   display_name        = "quantbot-server"
   shape               = "VM.Standard.A1.Flex"
 
   shape_config {
-    ocpus         = 1      # 2 of 4 free OCPUs
-    memory_in_gbs = 6     # 12 of 24 free GB
+    ocpus         = 1      # 1 of 4 free OCPUs — better availability than 2
+    memory_in_gbs = 6      # 6 of 24 free GB — proportional to 1 OCPU
     # Scale up to ocpus=2, memory_in_gbs=12 by recreating VM when capacity allows
   }
 
   source_details {
     source_type             = "image"
-    source_id               = data.oci_core_images.ubuntu_arm_image.images[0].id
-    boot_volume_size_in_gbs = 50   # free tier allows 50 GB
+    source_id               = var.vm_image_ocid
+    boot_volume_size_in_gbs = 50   # free tier allows up to 200 GB total
+    boot_volume_vpus_per_gb = 10   # CRITICAL: 10 = Balanced (Always Free)
+    # Do NOT set to 20 (Higher Performance) — that incurs charges
   }
 
   create_vnic_details {
@@ -182,6 +168,8 @@ resource "oci_core_instance" "quantbot_vm" {
 
       # Docker Compose v2
       apt-get install -y docker-compose-plugin
+      # docker compose v2 is available as 'docker compose' (no hyphen)
+      # also create symlink for legacy compatibility
       ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
 
       # Git
