@@ -999,7 +999,6 @@ def refresh_rsi(_):
                 bgcolor="rgba(0,0,0,0)",
             ),
             hovermode="x unified",
-            margin=dict(l=50, r=20, t=40, b=60),
         )
 
         return gauges, extremes_section, fig
