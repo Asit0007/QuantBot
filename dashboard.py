@@ -978,7 +978,8 @@ def refresh_rsi(_):
                 y=grp["rsi"],
                 name=f"{coin}  {latest_rsi:.1f}",
                 mode="lines",
-                line=dict(color=color, width=2),
+                line=dict(color=color, width=1.5),
+                opacity=0.85,
                 hovertemplate=(
                     f"<b>{coin}</b><br>"
                     "RSI: <b>%{y:.1f}</b><br>"
