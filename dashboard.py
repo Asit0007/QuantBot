@@ -32,6 +32,7 @@ load_dotenv()
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output
 
@@ -43,6 +44,7 @@ TRADE_LOG   = os.path.join(DATA_DIR, "trade_log.csv")
 RSI_HISTORY = os.path.join(DATA_DIR, "rsi_history.json")
 REFRESH_MS  = int(os.getenv("DASHBOARD_REFRESH_MS", "15000"))
 DASH_PORT   = int(os.getenv("DASHBOARD_PORT", "8050"))
+LEVERAGE    = int(os.getenv("LEVERAGE", "20"))  # must match bot.py — used for "Invested $"
 DASH_HOST   = os.getenv("DASHBOARD_HOST", "127.0.0.1")
 
 # ── Benchmarks from backtest ──────────────────────────────────────
@@ -119,6 +121,14 @@ def load_trades() -> pd.DataFrame:
             df["pnl_usd"] = df["pnl"]
         if "fees_usd" not in df.columns and "fees" in df.columns:
             df["fees_usd"] = df["fees"]
+        # Derived columns — computed from fields already logged by bot.py,
+        # so these populate correctly even for historic trades.
+        if "quantity_btc" in df.columns and "entry_price" in df.columns:
+            df["invested_usd"] = (df["quantity_btc"] * df["entry_price"] / LEVERAGE).round(2)
+        if "entry_price" in df.columns and "stop_price" in df.columns:
+            df["sl_pct"] = (
+                (df["entry_price"] - df["stop_price"]).abs() / df["entry_price"] * 100
+            ).round(2)
         return df.sort_values("datetime", ascending=False)
     except Exception:
         return pd.DataFrame()
@@ -473,9 +483,17 @@ def render_tab(tab):
                 html.Div(id="rsi-extremes-tbl"),
             ], style={"marginBottom": "24px"}),
 
-            # RSI over time line chart
+            # RSI per-coin small multiples grid
             html.Div([
-                html.Div("RSI HISTORY  —  last updated values shown in legend", style={
+                html.Div("RSI HISTORY  —  PER COIN", style={
+                    "color": MUTED, "fontSize": "10px", "textTransform": "uppercase",
+                    "letterSpacing": "1px", "marginBottom": "12px"}),
+                dcc.Graph(id="rsi-grid", config={"displayModeBar": False}),
+            ], style={"marginBottom": "24px"}),
+
+            # RSI over time — aggregate overlay
+            html.Div([
+                html.Div("RSI HISTORY  —  AGGREGATE (ALL COINS)  —  last updated values shown in legend", style={
                     "color": MUTED, "fontSize": "10px", "textTransform": "uppercase",
                     "letterSpacing": "1px", "marginBottom": "12px"}),
                 dcc.Graph(id="rsi-chart", config={"displayModeBar": False}),
@@ -648,14 +666,17 @@ def refresh(_):
         # Trade table
         if not trades.empty:
             want   = ["date_str","side","entry_price","exit_price","stop_price",
-                      "pnl_usd","fees_usd","balance","reason","hold_candles","mode"]
+                      "sl_pct","invested_usd","pnl_usd","fees_usd","balance",
+                      "reason","hold_candles","mode"]
             labels = {"date_str":"Date","side":"Side","entry_price":"Entry $",
-                      "exit_price":"Exit $","stop_price":"Stop $","pnl_usd":"P&L $",
+                      "exit_price":"Exit $","stop_price":"Stop $","sl_pct":"SL %",
+                      "invested_usd":"Invested $","pnl_usd":"P&L $",
                       "fees_usd":"Fees $","balance":"Balance $","reason":"Reason",
                       "hold_candles":"Hold (c)","mode":"Mode"}
             cols   = [c for c in want if c in trades.columns]
             df_d   = trades[cols].copy()
-            for c in ["entry_price","exit_price","stop_price","pnl_usd","fees_usd","balance"]:
+            for c in ["entry_price","exit_price","stop_price","sl_pct",
+                      "invested_usd","pnl_usd","fees_usd","balance"]:
                 if c in df_d.columns:
                     df_d[c] = df_d[c].round(2)
             df_d.columns = [labels.get(c, c) for c in cols]
@@ -701,6 +722,7 @@ def refresh(_):
 @app.callback(
     [Output("rsi-gauges",       "children"),
      Output("rsi-extremes-tbl", "children"),
+     Output("rsi-grid",         "figure"),
      Output("rsi-chart",        "figure")],
     Input("tick", "n_intervals"),
 )
@@ -714,7 +736,7 @@ def refresh_rsi(_):
     try:
         df = load_rsi_history()
         if df.empty:
-            return [], no_data, empty_fig
+            return [], no_data, empty_fig, empty_fig
 
         # Sort by timestamp — ensure chronological order always
         df = df.sort_values("ts").reset_index(drop=True)
@@ -1001,7 +1023,77 @@ def refresh_rsi(_):
             hovermode="x unified",
         )
 
-        return gauges, extremes_section, fig
+        # ── 4. PER-COIN GRID — small multiples, one subplot per coin ──
+        grid_rows, grid_cols = 2, 3
+        fig_grid = make_subplots(
+            rows=grid_rows, cols=grid_cols,
+            subplot_titles=coins_ordered,
+            vertical_spacing=0.16,
+            horizontal_spacing=0.05,
+        )
+
+        for i, coin in enumerate(coins_ordered):
+            row = i // grid_cols + 1
+            col = i % grid_cols + 1
+            grp = df[df["coin"] == coin].sort_values("ts")
+            color = COIN_COLORS.get(coin, "#58a6ff")
+
+            # Oversold / overbought reference bands — per subplot
+            fig_grid.add_hrect(y0=0,  y1=20,  fillcolor=GRN, opacity=0.07,
+                               line_width=0, row=row, col=col)
+            fig_grid.add_hrect(y0=80, y1=100, fillcolor=RED, opacity=0.07,
+                               line_width=0, row=row, col=col)
+            fig_grid.add_hline(y=20, line_dash="dot", line_color=GRN,
+                               line_width=1, opacity=0.5, row=row, col=col)
+            fig_grid.add_hline(y=50, line_dash="dot", line_color=BRD,
+                               line_width=1, opacity=0.3, row=row, col=col)
+            fig_grid.add_hline(y=80, line_dash="dot", line_color=RED,
+                               line_width=1, opacity=0.5, row=row, col=col)
+
+            if grp.empty:
+                continue
+
+            latest_rsi = grp["rsi"].iloc[-1]
+            fig_grid.add_trace(go.Scatter(
+                x=grp["ts"], y=grp["rsi"],
+                mode="lines",
+                line=dict(color=color, width=2),
+                showlegend=False,
+                hovertemplate=(f"<b>{coin}</b><br>RSI: <b>%{{y:.1f}}</b><br>"
+                               "%{x}<extra></extra>"),
+            ), row=row, col=col)
+            fig_grid.add_trace(go.Scatter(
+                x=[grp["ts"].iloc[-1]], y=[latest_rsi],
+                mode="markers",
+                marker=dict(color=color, size=7, symbol="circle",
+                            line=dict(color=BG, width=2)),
+                showlegend=False, hoverinfo="skip",
+            ), row=row, col=col)
+
+            fig_grid.update_yaxes(range=[0, 100], gridcolor=BRD,
+                                  tickvals=[0, 20, 50, 80, 100],
+                                  tickfont=dict(size=9, color=MUTED),
+                                  row=row, col=col)
+            fig_grid.update_xaxes(gridcolor=BRD, nticks=4, tickangle=-20,
+                                  tickformat="%d %b",
+                                  tickfont=dict(size=9, color=MUTED),
+                                  row=row, col=col)
+
+        fig_grid.update_layout(
+            **PLBASE,
+            height=460,
+            showlegend=False,
+        )
+        # NOTE: margin intentionally omitted — PLBASE already defines it.
+        # (Passing margin= here again raises "multiple values for keyword
+        # argument 'margin'" — same bug class fixed earlier on fig/update_layout.)
+        # Colour each subplot title to match its coin
+        for i, coin in enumerate(coins_ordered):
+            fig_grid.layout.annotations[i].update(
+                font=dict(color=COIN_COLORS.get(coin, TXT), size=13),
+            )
+
+        return gauges, extremes_section, fig_grid, fig
 
     except Exception as e:
         tb  = traceback.format_exc()
@@ -1009,7 +1101,7 @@ def refresh_rsi(_):
             html.Div(f"RSI Radar error: {e}", style={"color": RED}),
             html.Pre(tb, style={"color": MUTED, "fontSize": "10px"}),
         ])
-        return [], err, empty_fig
+        return [], err, empty_fig, empty_fig
 
 
 if __name__ == "__main__":
