@@ -143,6 +143,9 @@ def load_rsi_history() -> pd.DataFrame:
         if not data:
             return pd.DataFrame()
         df = pd.DataFrame(data)
+        # Parse ts strings ("2026-05-26 23:25 UTC") to proper datetime
+        # so Plotly tickformat="%d %b" works correctly on the x-axis
+        df["ts"] = pd.to_datetime(df["ts"].str.replace(" UTC", "", regex=False), utc=True)
         return df
     except Exception:
         return pd.DataFrame()
@@ -778,13 +781,11 @@ def refresh_rsi(_):
 
             coin_color = COIN_COLORS.get(coin, "#58a6ff")
 
-            # Format timestamp to be short: "07 May 06:49"
+            # ts is now a pandas Timestamp — strftime directly
             try:
-                from datetime import datetime
-                ts_obj = datetime.fromisoformat(ts.replace("UTC","").strip())
-                ts_fmt = ts_obj.strftime("%d %b %H:%M")
+                ts_fmt = ts.strftime("%d %b %H:%M")
             except Exception:
-                ts_fmt = ts[:16] if len(str(ts)) >= 16 else str(ts)
+                ts_fmt = str(ts)[:16]
 
             gauges.append(html.Div([
                 # Coin name with colored dot
@@ -836,6 +837,68 @@ def refresh_rsi(_):
                 "textAlign": "center",
                 "transition": "border-color 0.3s",
             }))
+
+        # ── AVG card — appended after the individual coin cards ──────
+        avg_rsi_val = float(latest["rsi"].mean())
+        avg_dist_os   = avg_rsi_val - 20
+        avg_dist_ob   = 80 - avg_rsi_val
+        avg_closest   = min(avg_dist_os, avg_dist_ob)
+        avg_pct_bar   = max(0, min(100, (1 - avg_closest / 50) * 100))
+        avg_rsi_color = (GRN if avg_rsi_val <= 30 else
+                         RED if avg_rsi_val >= 70 else
+                         YLW if (avg_rsi_val <= 40 or avg_rsi_val >= 60) else TXT)
+        if avg_rsi_val <= 20:
+            avg_border = GRN; avg_badge_bg = "#0d2818"; avg_badge_txt = "OVERSOLD 🟢"
+        elif avg_rsi_val >= 80:
+            avg_border = RED; avg_badge_bg = "#2d0f0f"; avg_badge_txt = "OVERBOUGHT 🔴"
+        else:
+            avg_border = PRP; avg_badge_bg = "#1a1130"; avg_badge_txt = "Neutral"
+
+        gauges.append(html.Div([
+            html.Div([
+                html.Span("◈", style={"color": PRP, "marginRight": "6px",
+                                      "fontSize": "12px"}),
+                html.Span("AVG", style={"fontWeight": "700", "fontSize": "15px"}),
+            ], style={"marginBottom": "2px"}),
+            html.Div("All coins", style={"color": MUTED, "fontSize": "10px",
+                                         "marginBottom": "10px", "letterSpacing": "0.5px"}),
+            html.Div(f"{avg_rsi_val:.1f}", style={
+                "fontSize": "36px", "fontWeight": "800",
+                "color": avg_rsi_color, "lineHeight": "1", "marginBottom": "2px",
+            }),
+            html.Div("RSI", style={"color": MUTED, "fontSize": "9px",
+                                   "marginBottom": "8px", "letterSpacing": "2px"}),
+            html.Div(avg_badge_txt, style={
+                "fontSize": "10px", "padding": "3px 10px",
+                "background": avg_badge_bg, "borderRadius": "20px",
+                "color": avg_border, "fontWeight": "700", "marginBottom": "10px",
+                "display": "inline-block",
+            }),
+            html.Div([
+                html.Div(style={
+                    "height": "3px",
+                    "width": f"{avg_pct_bar:.0f}%",
+                    "background": (RED if avg_rsi_val >= 60 else GRN if avg_rsi_val <= 40 else BRD),
+                    "borderRadius": "2px",
+                    "transition": "width 0.5s",
+                })
+            ], style={"background": "#1a1a2e", "borderRadius": "2px",
+                      "marginBottom": "8px", "height": "3px"}),
+            html.Div([
+                html.Span("20", style={"color": GRN, "fontSize": "8px"}),
+                html.Span("  ─────  ", style={"color": BRD, "fontSize": "8px"}),
+                html.Span("80", style={"color": RED, "fontSize": "8px"}),
+            ], style={"marginBottom": "6px"}),
+            html.Div(f"{len(latest)} coins", style={"color": MUTED, "fontSize": "9px"}),
+        ], style={
+            "background": SURF,
+            "border": f"2px solid {avg_border}",
+            "borderRadius": "12px",
+            "padding": "16px 18px",
+            "minWidth": "140px",
+            "textAlign": "center",
+            "transition": "border-color 0.3s",
+        }))
 
         # ── 2. EXTREMES / NEAREST TABLE ───────────────────────────
         extremes = df[df["zone"].isin(["oversold","overbought"])].copy()
@@ -907,8 +970,7 @@ def refresh_rsi(_):
                 zcolor = GRN if is_os else RED
                 c = COIN_COLORS.get(r["coin"], "#58a6ff")
                 try:
-                    ts_obj = datetime.fromisoformat(r["ts"].replace("UTC","").strip())
-                    ts_fmt = ts_obj.strftime("%d %b %Y %H:%M")
+                    ts_fmt = r["ts"].strftime("%d %b %Y %H:%M")
                 except Exception:
                     ts_fmt = str(r["ts"])[:16]
                 rows.append(html.Tr([
@@ -948,83 +1010,69 @@ def refresh_rsi(_):
                        "border": f"1px solid {BRD}"}
             )
 
-        # ── 3. CLEAN LINE CHART ────────────────────────────────────
+        # ── 3. AGGREGATE AVERAGE LINE ─────────────────────────────────
+        # Compute average RSI across all coins per timestamp, then plot
+        # that single line — no individual coin lines, no spread band.
+        pivot      = df.pivot_table(index="ts", columns="coin", values="rsi", aggfunc="mean")
+        pivot      = pivot.sort_index().ffill()
+        avg_rsi    = pivot.mean(axis=1)
+        latest_avg = float(avg_rsi.iloc[-1]) if not avg_rsi.empty else 0.0
+        avg_color  = GRN if latest_avg <= 20 else (RED if latest_avg >= 80 else BLU)
+
         fig = go.Figure()
 
-        # Reference bands
         fig.add_hrect(y0=0,  y1=20, fillcolor=GRN, opacity=0.07, line_width=0,
                       annotation_text="Oversold < 20", annotation_position="left",
                       annotation_font_color=GRN, annotation_font_size=10)
         fig.add_hrect(y0=80, y1=100, fillcolor=RED, opacity=0.07, line_width=0,
                       annotation_text="Overbought > 80", annotation_position="left",
                       annotation_font_color=RED, annotation_font_size=10)
-        fig.add_hline(y=20, line_dash="dot", line_color=GRN, line_width=1,
-                      opacity=0.5)
-        fig.add_hline(y=50, line_dash="dot", line_color=BRD, line_width=1,
-                      opacity=0.4)
-        fig.add_hline(y=80, line_dash="dot", line_color=RED, line_width=1,
-                      opacity=0.5)
+        fig.add_hline(y=20, line_dash="dot", line_color=GRN, line_width=1, opacity=0.5)
+        fig.add_hline(y=50, line_dash="dot", line_color=BRD, line_width=1, opacity=0.4)
+        fig.add_hline(y=80, line_dash="dot", line_color=RED, line_width=1, opacity=0.5)
 
-        coins_ordered = ["BTC","ETH","SOL","BNB","XRP","SUI"]
-        for coin in coins_ordered:
-            grp = df[df["coin"] == coin].sort_values("ts")
-            if grp.empty:
-                continue
-            color = COIN_COLORS.get(coin, "#58a6ff")
-            latest_rsi = grp["rsi"].iloc[-1]
-            # Lines only — no markers (42 days × 6 scans/day = ~250 points = too many markers)
-            fig.add_trace(go.Scatter(
-                x=grp["ts"],
-                y=grp["rsi"],
-                name=f"{coin}  {latest_rsi:.1f}",
-                mode="lines",
-                line=dict(color=color, width=1.5),
-                opacity=0.85,
-                hovertemplate=(
-                    f"<b>{coin}</b><br>"
-                    "RSI: <b>%{y:.1f}</b><br>"
-                    "%{x}<br>"
-                    "<extra></extra>"
-                ),
-            ))
-            # Mark only the latest point with a dot
-            fig.add_trace(go.Scatter(
-                x=[grp["ts"].iloc[-1]],
-                y=[latest_rsi],
-                mode="markers",
-                marker=dict(color=color, size=8, symbol="circle",
-                            line=dict(color=BG, width=2)),
-                showlegend=False,
-                hoverinfo="skip",
-            ))
+        fig.add_trace(go.Scatter(
+            x=avg_rsi.index,
+            y=avg_rsi.values,
+            name=f"Avg RSI  {latest_avg:.1f}",
+            mode="lines",
+            line=dict(color=avg_color, width=3),
+            fill="tozeroy",
+            fillcolor=f"rgba(88,166,255,0.06)",
+            hovertemplate="<b>Avg RSI</b>: %{y:.1f}<br>%{x}<extra></extra>",
+        ))
 
-        # Clean x-axis — limit tick density
+        fig.add_trace(go.Scatter(
+            x=[avg_rsi.index[-1]],
+            y=[latest_avg],
+            mode="markers",
+            marker=dict(color=avg_color, size=12, symbol="circle",
+                        line=dict(color=BG, width=3)),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
         fig.update_layout(
             **PLBASE,
             height=380,
+            showlegend=False,
             yaxis=dict(
                 range=[0, 100],
                 gridcolor=BRD,
                 tickvals=[0, 20, 30, 50, 70, 80, 100],
-                title=dict(text="RSI", font=dict(color=MUTED, size=11)),
+                title=dict(text="Avg RSI", font=dict(color=MUTED, size=11)),
             ),
             xaxis=dict(
                 gridcolor=BRD,
-                nticks=10,          # max 10 date labels — no more clutter
-                tickangle=-30,      # slight angle, much more readable
-                tickformat="%d %b", # "07 May" format — clean and short
+                nticks=10,
+                tickangle=-30,
+                tickformat="%d %b",
             ),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom", y=1.02,
-                xanchor="left",   x=0,
-                font=dict(color=MUTED, size=11),
-                bgcolor="rgba(0,0,0,0)",
-            ),
-            hovermode="x unified",
+            hovermode="x",
         )
 
         # ── 4. PER-COIN GRID — small multiples, one subplot per coin ──
+        coins_ordered = ["BTC","ETH","SOL","BNB","XRP","SUI"]
         grid_rows, grid_cols = 2, 3
         fig_grid = make_subplots(
             rows=grid_rows, cols=grid_cols,
