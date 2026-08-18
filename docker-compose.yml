@@ -68,6 +68,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro     # SSL certs (Let's Encrypt — optional)
+      - ./nginx/htpasswd:/etc/nginx/htpasswd:ro   # basic auth — generate on the server, never commit
     depends_on:
       - dashboard
     logging:

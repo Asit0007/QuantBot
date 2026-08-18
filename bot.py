@@ -2,13 +2,16 @@
 """
 bot.py — QuantBot Live Trading Engine v1.0
 ════════════════════════════════════════════════════════════════════
-Built from 20 backtests (Sep 2019 → Mar 2026), $100 → $4,699
+Current config: 5× leverage, wide ATR stops (backtest_leverage.py /
+backtest_ratchet.py winner). 6.5yr backtest (Sep 2019 → Mar 2026):
+$100 → $9,347 (+90.7%/yr), PF 1.60, WR 36.7%.
 
 LOCKED PARAMETERS (do not change without re-backtesting):
   Signal:   RSI Divergence(14) + MACD Cross(12/26/9) + Volume(2×)
   Asset:    BTC/USDT isolated margin futures
   Frame:    15m candles
-  Leverage: 20×
+  Leverage: 5×
+  Stops:    ATR × 8.0 (long) / ATR × 6.0 (short)
   Risk:     10% of corpus per trade (as margin)
   CB:       5 consecutive losses → 48h pause (flat)
   DCA:      $10/mo on 10th, +10%/yr
@@ -16,7 +19,7 @@ LOCKED PARAMETERS (do not change without re-backtesting):
 
 PAPER TRADE FIRST:
   PAPER_TRADE = true  (default in .env)  → simulates everything, no real orders
-  Run 20+ paper trades, compare WR (~12%) and PF (~1.78) to backtest.
+  Run 20+ paper trades, compare WR (~36.7%) and PF (~1.60) to backtest.
   Only set PAPER_TRADE=false in .env after confirming live performance.
 
 USAGE:
@@ -58,51 +61,65 @@ from corpus_manager import CorpusManager
 #  CONFIGURATION — All locked parameters from 20 backtests
 # ══════════════════════════════════════════════════════════════════════
 
-try:
-    # ── User-facing parameters — set these in .env ────────────────────
-    # PAPER_TRADE: "true" → simulate only. Set "false" in .env to go live.
-    PAPER_TRADE    = os.getenv("PAPER_TRADE", "true").strip().lower() == "true"
+# ── Required vars — checked explicitly so a missing one stops the bot
+#    with a clear message instead of a raw TypeError from float(None).
+_REQUIRED_ENV_VARS = [
+    "START_BALANCE", "LEVERAGE", "RISK_PER_TRADE",
+    "DCA_DAY", "DCA_MONTHLY_USD", "DCA_ANNUAL_GROWTH", "START_YEAR",
+    "SYMBOL", "TIMEFRAME", "CANDLE_MINUTES", "LONG_ATR_MULT", "SHORT_ATR_MULT",
+    "RSI_LEN", "MACD_FAST", "MACD_SLOW", "MACD_SIGNAL_WIN",
+    "VOL_MULT", "VOL_SMA_PERIOD", "ATR_PERIOD",
+    "DIV_WINDOW", "DIV_SHIFT", "DIV_MEMORY",
+    "CB_TRIGGER", "CB_HOURS", "FEE_RATE", "CANDLES_NEEDED", "WARMUP",
+]
+_missing = [v for v in _REQUIRED_ENV_VARS if os.getenv(v) is None]
+if _missing:
+    raise RuntimeError(
+        f"CRITICAL: Missing environment variable(s): {', '.join(_missing)}. "
+        f"Copy env.example to .env and fill these in."
+    )
 
-    # Starting balance for a fresh state (only used on first ever run)
-    START_BALANCE  = float(os.getenv("START_BALANCE"))
+# ── User-facing parameters — set these in .env ────────────────────
+# PAPER_TRADE: "true" → simulate only. Set "false" in .env to go live.
+PAPER_TRADE    = os.getenv("PAPER_TRADE", "true").strip().lower() == "true"
 
-    # Position sizing
-    LEVERAGE       = int(os.getenv("LEVERAGE"))
-    RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE"))
+# Starting balance for a fresh state (only used on first ever run)
+START_BALANCE  = float(os.getenv("START_BALANCE"))
 
-    # Corpus / DCA
-    DCA_DAY        = int(os.getenv("DCA_DAY"))       # day of month for contribution
-    DCA_BASE       = float(os.getenv("DCA_MONTHLY_USD"))   # base monthly DCA ($)
-    DCA_GROWTH     = float(os.getenv("DCA_ANNUAL_GROWTH")) # 10% annual step-up
-    START_YEAR     = int(os.getenv("START_YEAR"))   # year the bot first ran
+# Position sizing
+LEVERAGE       = int(os.getenv("LEVERAGE"))
+RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE"))
 
-    # ── LOCKED strategy parameters ───────────────────────────────────
-    # Defaults are the values fixed across 20 backtests (Sep 2019 → Mar 2026).
-    # Overridable via .env — but changing any value invalidates backtest results.
-    SYMBOL          = os.getenv("SYMBOL")
-    TIMEFRAME       = os.getenv("TIMEFRAME")
-    CANDLE_MINUTES  = int(os.getenv("CANDLE_MINUTES"))
-    LONG_ATR_MULT   = float(os.getenv("LONG_ATR_MULT"))
-    SHORT_ATR_MULT  = float(os.getenv("SHORT_ATR_MULT"))
-    RSI_LEN         = int(os.getenv("RSI_LEN"))
-    MACD_FAST       = int(os.getenv("MACD_FAST"))
-    MACD_SLOW       = int(os.getenv("MACD_SLOW"))
-    MACD_SIGNAL_WIN = int(os.getenv("MACD_SIGNAL_WIN"))
-    VOL_MULT        = float(os.getenv("VOL_MULT"))
-    VOL_SMA_PERIOD  = int(os.getenv("VOL_SMA_PERIOD"))
-    ATR_PERIOD      = int(os.getenv("ATR_PERIOD"))
-    DIV_WINDOW      = int(os.getenv("DIV_WINDOW"))
-    DIV_SHIFT       = int(os.getenv("DIV_SHIFT"))
-    DIV_MEMORY      = int(os.getenv("DIV_MEMORY"))
-    CB_TRIGGER      = int(os.getenv("CB_TRIGGER"))
-    CB_HOURS        = int(os.getenv("CB_HOURS"))
-    FEE_RATE        = float(os.getenv("FEE_RATE"))
-    CANDLES_NEEDED  = int(os.getenv("CANDLES_NEEDED"))
-    WARMUP          = int(os.getenv("WARMUP"))
+# Corpus / DCA
+DCA_DAY        = int(os.getenv("DCA_DAY"))       # day of month for contribution
+DCA_BASE       = float(os.getenv("DCA_MONTHLY_USD"))   # base monthly DCA ($)
+DCA_GROWTH     = float(os.getenv("DCA_ANNUAL_GROWTH")) # 10% annual step-up
+START_YEAR     = int(os.getenv("START_YEAR"))   # year the bot first ran
 
-except KeyError as e:
-    # If any variable above is missing from the .env, the bot safely stops
-    raise RuntimeError(f"CRITICAL: Missing environment variable {e}. Please update your .env file.")
+# ── LOCKED strategy parameters ───────────────────────────────────
+# Defaults are the values fixed by the current validated backtest run
+# (see backtest_leverage.py). Overridable via .env — but changing any
+# value invalidates backtest results.
+SYMBOL          = os.getenv("SYMBOL")
+TIMEFRAME       = os.getenv("TIMEFRAME")
+CANDLE_MINUTES  = int(os.getenv("CANDLE_MINUTES"))
+LONG_ATR_MULT   = float(os.getenv("LONG_ATR_MULT"))
+SHORT_ATR_MULT  = float(os.getenv("SHORT_ATR_MULT"))
+RSI_LEN         = int(os.getenv("RSI_LEN"))
+MACD_FAST       = int(os.getenv("MACD_FAST"))
+MACD_SLOW       = int(os.getenv("MACD_SLOW"))
+MACD_SIGNAL_WIN = int(os.getenv("MACD_SIGNAL_WIN"))
+VOL_MULT        = float(os.getenv("VOL_MULT"))
+VOL_SMA_PERIOD  = int(os.getenv("VOL_SMA_PERIOD"))
+ATR_PERIOD      = int(os.getenv("ATR_PERIOD"))
+DIV_WINDOW      = int(os.getenv("DIV_WINDOW"))
+DIV_SHIFT       = int(os.getenv("DIV_SHIFT"))
+DIV_MEMORY      = int(os.getenv("DIV_MEMORY"))
+CB_TRIGGER      = int(os.getenv("CB_TRIGGER"))
+CB_HOURS        = int(os.getenv("CB_HOURS"))
+FEE_RATE        = float(os.getenv("FEE_RATE"))
+CANDLES_NEEDED  = int(os.getenv("CANDLES_NEEDED"))
+WARMUP          = int(os.getenv("WARMUP"))
 
 # ── Files — all written to DATA_DIR (shared Docker volume) ────────
 DATA_DIR         = os.getenv("DATA_DIR", ".")
@@ -111,10 +128,11 @@ STATE_FILE        = os.path.join(DATA_DIR, "bot_state.json")
 CORPUS_STATE_FILE = os.path.join(DATA_DIR, "corpus_state.json")
 TRADE_LOG_FILE    = os.path.join(DATA_DIR, "trade_log.csv")
 LOG_FILE          = os.path.join(DATA_DIR, "bot.log")
+BOT_PAUSED_FILE   = os.path.join(DATA_DIR, "bot_paused.flag")
 
-# ── Paper trade benchmarks (from backtest) ────────────────────────
-BENCH_WR         = 0.124
-BENCH_PF         = 1.78
+# ── Paper trade benchmarks (from backtest_ratchet.py, 5x/10-10 tier) ──
+BENCH_WR         = 0.367
+BENCH_PF         = 1.60
 BENCH_MIN_TRADES = 20
 
 
@@ -307,6 +325,11 @@ def cb_on_loss(state: dict) -> bool:
     return False
 
 
+def manually_paused() -> bool:
+    """True if /pause was sent via Telegram (notifier.py touches BOT_PAUSED_FILE)."""
+    return Path(BOT_PAUSED_FILE).exists()
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  EXCHANGE WRAPPER
 # ══════════════════════════════════════════════════════════════════════
@@ -375,14 +398,34 @@ class Exchange:
             self._symbol, side, qty, params={"reduceOnly": False}
         )
         time.sleep(0.3)
-
-        stop_side   = "sell" if side == "buy" else "buy"
-        stop_order  = self._ex.create_order(
-            self._symbol, "STOP_MARKET", stop_side, qty,
-            params={"stopPrice": stop, "reduceOnly": True}
-        )
         filled = float(order.get("average") or order.get("price") or 0)
-        return {"filled_price": filled, "stop_order_id": stop_order["id"]}
+
+        # Entry is now live — retry the protective stop a few times rather
+        # than leaving the position naked on one transient API failure.
+        stop_side = "sell" if side == "buy" else "buy"
+        stop_id   = None
+        for attempt in range(1, 4):
+            try:
+                stop_order = self._ex.create_order(
+                    self._symbol, "STOP_MARKET", stop_side, qty,
+                    params={"stopPrice": stop, "reduceOnly": True}
+                )
+                stop_id = stop_order["id"]
+                break
+            except Exception as e:
+                log.error(f"Stop-loss order attempt {attempt}/3 failed: {e}")
+                if attempt < 3:
+                    time.sleep(2)
+
+        if stop_id is None:
+            log.error(
+                "🚨 CRITICAL: entry filled but the exchange stop-loss order could "
+                "NOT be placed after 3 attempts — position has no hard stop on "
+                "Binance. The bot's own per-candle stop check still protects it "
+                "while this process keeps running. Verify manually on Binance."
+            )
+
+        return {"filled_price": filled, "stop_order_id": stop_id}
 
     def place_exit(self, pos_side: str, qty: float, stop_id: str) -> dict:
         """Close a position. pos_side: 'long' or 'short'."""
@@ -704,6 +747,8 @@ class QuantBot:
             paused, hours_left = cb_is_paused(self.st)
             if paused:
                 log.debug(f"CB pause active — {hours_left:.1f}h remaining")
+            elif manually_paused():
+                log.debug("Manual pause active (/pause via Telegram) — skipping entries")
             else:
                 # Long entry
                 if (bull > 0 and
@@ -993,7 +1038,14 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.reset:
-        for f in [STATE_FILE, CORPUS_STATE_FILE, TRADE_LOG_FILE, LOG_FILE]:
+        reset_files = [
+            STATE_FILE, CORPUS_STATE_FILE, TRADE_LOG_FILE, LOG_FILE, BOT_PAUSED_FILE,
+            # Shared with notifier.py — also part of a "fresh start"
+            os.path.join(DATA_DIR, "rsi_alert_state.json"),
+            os.path.join(DATA_DIR, "rsi_history.json"),
+            os.path.join(DATA_DIR, "notifier.log"),
+        ]
+        for f in reset_files:
             p = Path(f)
             if p.exists():
                 p.unlink()

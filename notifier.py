@@ -570,8 +570,13 @@ class CommandHandler:
         for u in get_updates(self._offset):
             self._offset = u["update_id"] + 1
             msg = u.get("message") or u.get("edited_message")
-            if msg:
-                self._handle(msg.get("text","").strip().lower())
+            if not msg:
+                continue
+            sender_id = str(msg.get("chat", {}).get("id", ""))
+            if not CHAT_ID or sender_id != str(CHAT_ID):
+                log.warning(f"Ignored command from unauthorized chat_id={sender_id}")
+                continue
+            self._handle(msg.get("text","").strip().lower())
 
     def _handle(self, text: str):
         state  = read_json(STATE_FILE)

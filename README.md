@@ -90,7 +90,7 @@ QuantBot is an end-to-end algorithmic trading and DevOps project — built from 
 
 ## Signal Logic
 
-The trading signal requires **all three gates to align simultaneously** on a 15-minute BTC/USDT futures candle — this selectivity is by design and is what makes the strategy viable at 20× leverage.
+The trading signal requires **all three gates to align simultaneously** on a 15-minute BTC/USDT futures candle — this selectivity is by design and is what makes the strategy viable at leverage.
 
 ```
 Gate 1 — RSI Divergence (armed for DIV_MEMORY=3 candles)
@@ -106,7 +106,7 @@ Gate 3 — Volume Spike (institutional confirmation)
   Filters out ~70% of candles — only acts on significant moves
 
 All three gates armed simultaneously → entry
-ATR-based stop: Long = entry − (ATR × 2.0), Short = entry + (ATR × 1.5)
+ATR-based stop (current 5× tier): Long = entry − (ATR × 8.0), Short = entry + (ATR × 6.0)
 Exit: opposite signal OR stop hit
 ```
 
@@ -114,31 +114,32 @@ Exit: opposite signal OR stop hit
 
 ## Backtest Results
 
-Validated across **20 backtests** over **6.5 years** (Sep 2019 → Mar 2026) covering multiple market regimes:
+Validated across **20 backtests** over **6.5 years** (Sep 2019 → Mar 2026) covering multiple market regimes. The per-year table below is from the original 20× signal-calibration run; a later leverage/stop-width sweep (`backtest_leverage.py`, `backtest_ratchet.py`) found 5× beats 20× on terminal equity, and that 5× tier is what `bot.py` actually runs today — see the config table underneath.
 
 | Year      | Market      | P&L         | Note                        |
 | --------- | ----------- | ----------- | --------------------------- |
-| 2019      | Neutral     | Small loss  | Warmup period               |
+| 2019      | Neutral     | Small loss  | Warmup period                |
 | 2020      | Bull        | +206%       | COVID crash + recovery      |
 | 2021      | Bull        | +137%       | BTC ATH cycle               |
 | 2022      | Bear        | **-44%**    | Worst year — FTX collapse   |
 | 2023      | Bull        | +325%       | Recovery + new accumulation |
 | 2024      | Bull        | +126%       | ETF approval cycle          |
-| **TOTAL** | **6.5 yrs** | **+45%/yr** | **$100 → $4,699**           |
+| **TOTAL** | **6.5 yrs** | **+45%/yr** | **$100 → $4,699**  (20× signal-calibration run) |
 
-**Config A (locked parameters — do not change without re-backtesting):**
+**Current live config — 5× leverage tier (locked — do not change without re-backtesting):**
 
-| Parameter        | Value          | Rationale                         |
-| ---------------- | -------------- | --------------------------------- |
-| Symbol           | BTC/USDT       | Highest liquidity futures pair    |
-| Timeframe        | 15m            | Signal quality vs. noise tradeoff |
-| Leverage         | 20×            | Confirmed safe with ATR stops     |
-| Risk per trade   | 10% corpus     | Validated over 6.5 years          |
-| ATR stop (long)  | 2.0×           | Avoids premature stop-outs        |
-| ATR stop (short) | 1.5×           | Tighter on shorts — regime aware  |
-| Circuit breaker  | 5 losses → 48h | Flat pause, not tiered            |
-| Win rate         | 12.4%          | High R:R, not high frequency      |
-| Profit factor    | 1.78           | Gross profit / gross loss         |
+| Parameter         | Value                     | Rationale                                                         |
+| ------------------ | --------------------------- | ---------------------------------------------------------------------- |
+| Symbol            | BTC/USDT                  | Highest liquidity futures pair                                   |
+| Timeframe         | 15m                        | Signal quality vs. noise tradeoff                                |
+| Leverage          | 5×                          | Best terminal equity across 5 tiers tested                       |
+| Risk per trade    | 10% corpus                 | Validated over 6.5 years                                         |
+| ATR stop (long)   | 8.0×                        | Scaled from 2.0× base for the 5× tier                             |
+| ATR stop (short)  | 6.0×                        | Scaled from 1.5× base for the 5× tier                             |
+| Circuit breaker   | 5 losses → 48h             | Flat pause, not tiered                                            |
+| Win rate          | 36.7%                       | Wider stops → fewer whipsaw stop-outs                             |
+| Profit factor     | 1.60                        | Gross profit / gross loss                                        |
+| Total return      | $100 → $9,347 (+90.7%/yr)  | 6.5yr, Sep 2019 → Mar 2026 (`backtest_ratchet.py`, ratchet 10/10) |
 
 ---
 
@@ -250,9 +251,8 @@ quantbot/
 ├── corpus_manager.py         # Risk management — DCA, ratchet, corpus tracking
 ├── dashboard.py              # Plotly Dash web dashboard (Overview + RSI Radar)
 ├── notifier.py               # Telegram bot — alerts, heartbeat, RSI scanner
-├── backtest.py               # Backtest engine — 20 configs tested over 6.5 years
-├── backtest_pa.py            # Price Action backtest (CHoCH + BOS + FVG)
-├── backtest_combo.py         # Combination signal backtest (4 hybrid configs)
+├── backtest_leverage.py      # Leverage/stop-width sweep — 5 tiers (20x -> 5x), 6.5yr each
+├── backtest_ratchet.py       # Corpus ratchet frequency sweep at the 5x tier
 ├── requirements.txt          # Python dependencies
 ├── Dockerfile                # Multi-stage build (base → bot / notifier / dashboard)
 ├── docker-compose.yml        # 4-service stack with shared named volume
@@ -572,12 +572,31 @@ sudo docker exec quantbot_bot cat /app/data/trade_log.csv
 ## Security
 
 - **`.env` is gitignored** — never committed, created manually on the server
+- **`nginx/htpasswd` is gitignored** — same as `.env`, generated manually on the server, never synced via CI (see Dashboard Access below)
+- **Dashboard requires basic auth** — nginx enforces `auth_basic` on port 8888, which the Cloudflare Tunnel forwards to; the dashboard is reachable over the internet, so it isn't left open even though the OCI security list also restricts direct `:8888` access to one IP
+- **Telegram commands are sender-checked** — `notifier.py` verifies the incoming `chat_id` against `TELEGRAM_CHAT_ID` before acting, so only the configured chat can query balance/position or send `/pause`
 - **Terraform state** (`terraform.tfstate`, `terraform.tfvars`) is gitignored — contains resource IDs
 - **SSH access locked to specific IP** via OCI security list (`my_ip_cidr/32`)
 - **No Binance withdrawal permissions** — API keys created with Futures trading only
 - **Cloudflare Tunnel** hides server IP — no direct exposure to the internet
 - **Docker volume** isolates state files inside the container network
 - **GitHub Secrets** for all CI/CD credentials — never in workflow YAML
+- **`.dockerignore`** keeps `.env`, state files, and logs out of image layers
+
+### Dashboard Access
+
+The dashboard is behind HTTP basic auth. Set the credentials directly on the server (never via CI, same as `.env`):
+
+```bash
+ssh -i ~/.ssh/quantbot_rsa ubuntu@YOUR_VM_IP
+cd ~/quantbot
+
+sudo apt install apache2-utils -y
+htpasswd -c -B nginx/htpasswd admin        # -c only on first run — it overwrites the file
+chmod 600 nginx/htpasswd
+
+sudo docker compose up -d --no-deps nginx  # reload nginx with the new file
+```
 
 If you find a security issue, please email [asitminz007@gmail.com](mailto:asitminz007@gmail.com).
 
@@ -585,7 +604,6 @@ If you find a security issue, please email [asitminz007@gmail.com](mailto:asitmi
 
 ## Future Improvements
 
-- [ ] Implement `bot_paused.flag` check in bot.py entry guard (notifier `/pause` command already creates the flag)
 - [ ] Paper trade 20+ trades → compare WR/PF to backtest benchmarks → go live at $100
 - [ ] Investigate C3 signal (RSI Div + CHoCH + FVG) — backtest showed +64.8%/yr with same DD as Config A
 - [ ] Terraform remote state (OCI Object Storage) for team/multi-environment support
@@ -597,15 +615,14 @@ If you find a security issue, please email [asitminz007@gmail.com](mailto:asitmi
 
 ## Backtest Methodology
 
-Three separate backtest files cover different hypothesis tests:
+Two sweeps validate the parameters `bot.py` actually runs today:
 
-| File                | Purpose                                           | Result                     |
-| ------------------- | ------------------------------------------------- | -------------------------- |
-| `backtest.py`       | Config A–E: flat CB, progressive scaling variants | Config A wins              |
-| `backtest_pa.py`    | Pure Price Action: CHoCH + BOS + FVG              | $1,759 — loses to Config A |
-| `backtest_combo.py` | 4 hybrid combos: RSI Div + PA signals             | C3 ($6,362) shows promise  |
+| File                   | Purpose                                                                                  | Result                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `backtest_leverage.py` | Same signal at 5 leverage tiers (20x/15x/10x/7x/5x), ATR stops scaled proportionally per tier | 5× wins — $9,347 vs $4,699 at 20×, PF 1.60 vs 1.78 |
+| `backtest_ratchet.py`  | Corpus ratchet frequency at the winning 5× tier (10/10, 5/5, 2/2, 2/10 asymmetric)          | 10/10 baseline is what's in production            |
 
-All backtests use identical risk parameters (20× leverage, 10% risk, flat CB, CorpusManager DCA) so results are directly comparable.
+All backtests use identical signal parameters (RSI divergence + MACD cross + volume) and framework (10% risk/trade, flat CB, CorpusManager DCA) — only leverage/stop-width or ratchet frequency vary between tiers.
 
 ---
 

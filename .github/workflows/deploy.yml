@@ -58,7 +58,7 @@ jobs:
           echo "$CHANGED" | grep -qE "^bot\.py$|^corpus_manager\.py$" && BOT=true
           echo "$CHANGED" | grep -q "notifier.py"   && NOTIFIER=true
           echo "$CHANGED" | grep -q "dashboard.py"  && DASHBOARD=true
-          echo "$CHANGED" | grep -qE "^Dockerfile$|^requirements\.txt$|^docker-compose\.yml$|^nginx/" && INFRA=true
+          echo "$CHANGED" | grep -qE "^Dockerfile$|^\.dockerignore$|^requirements\.txt$|^docker-compose\.yml$|^nginx/" && INFRA=true
 
           echo "bot=$BOT"             >> $GITHUB_OUTPUT
           echo "notifier=$NOTIFIER"   >> $GITHUB_OUTPUT
@@ -97,7 +97,7 @@ jobs:
           host: ${{ secrets.ORACLE_HOST }}
           username: ${{ secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_KEY }}
-          source: "bot.py,corpus_manager.py,dashboard.py,notifier.py,requirements.txt,Dockerfile,docker-compose.yml,nginx/nginx.conf"
+          source: "bot.py,corpus_manager.py,dashboard.py,notifier.py,requirements.txt,Dockerfile,.dockerignore,docker-compose.yml,nginx/nginx.conf"
           target: "~/quantbot"
           overwrite: true
 
@@ -121,7 +121,14 @@ jobs:
             # Full rebuild if Dockerfile / requirements / compose / nginx changed
             if [ "${{ steps.changes.outputs.infra }}" = "true" ]; then
               echo "Infrastructure changed — full rebuild..."
-              sudo docker compose build && sudo docker compose up -d
+              sudo docker compose build
+              POS=$(cat /tmp/quantbot_position_status 2>/dev/null || echo "none")
+              if [ "${{ steps.changes.outputs.bot }}" = "true" ] && [ "$POS" = "open" ]; then
+                echo "Open position detected — rebuilding everything except bot; bot keeps running on its current image until flat."
+                sudo docker compose up -d --no-deps notifier dashboard nginx
+              else
+                sudo docker compose up -d
+              fi
               echo "Full rebuild complete"; exit 0
             fi
 

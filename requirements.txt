@@ -1,10 +1,12 @@
-# requirements
-ccxt>=4.3.0
-pandas>=2.0.0
-numpy>=1.25.0
-ta>=0.10.2
-python-dotenv>=1.0.0
-dash>=2.17.0
-plotly>=5.20.0
-requests>=2.31.0
-scipy>=1.10.0
+# requirements — pinned exact (not just >=) so a rebuild months from now
+# can't silently pull in a breaking change for a bot trading real money.
+# Bump deliberately and re-run paper trading before redeploying.
+ccxt==4.5.40
+pandas==2.3.3
+numpy==2.4.2
+ta==0.11.0
+python-dotenv==1.2.2
+dash==4.0.0
+plotly==6.6.0
+requests==2.32.5
+scipy==1.17.1

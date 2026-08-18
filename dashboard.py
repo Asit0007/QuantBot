@@ -44,12 +44,12 @@ TRADE_LOG   = os.path.join(DATA_DIR, "trade_log.csv")
 RSI_HISTORY = os.path.join(DATA_DIR, "rsi_history.json")
 REFRESH_MS  = int(os.getenv("DASHBOARD_REFRESH_MS", "15000"))
 DASH_PORT   = int(os.getenv("DASHBOARD_PORT", "8050"))
-LEVERAGE    = int(os.getenv("LEVERAGE", "20"))  # must match bot.py — used for "Invested $"
+LEVERAGE    = int(os.getenv("LEVERAGE", "5"))  # must match bot.py — used for "Invested $"
 DASH_HOST   = os.getenv("DASHBOARD_HOST", "127.0.0.1")
 
-# ── Benchmarks from backtest ──────────────────────────────────────
-BENCH_WR = 0.124
-BENCH_PF = 1.78
+# ── Benchmarks from backtest_ratchet.py (5x/10-10 tier — matches live config) ──
+BENCH_WR = 0.367
+BENCH_PF = 1.60
 
 # ── Theme ─────────────────────────────────────────────────────────
 BG    = "#0d1117"
@@ -710,14 +710,12 @@ def refresh(_):
         return (hdr_mid, hdr_time, row_kpi, row_q,
                 fe, fdd, fh, fmon, fsd, frwr, fcum, pc, tbl)
 
-    except Exception as e:
-        tb  = traceback.format_exc()
+    except Exception:
+        print(f"Dashboard refresh error:\n{traceback.format_exc()}")
         ef  = go.Figure().update_layout(**PLBASE)
-        err = html.Div([
-            html.Div(f"Dashboard error: {e}", style={"color":RED}),
-            html.Pre(tb, style={"color":MUTED,"fontSize":"10px"}),
-        ])
-        return (f"Error: {e}", "", [], [],
+        err = html.Div("Dashboard is temporarily unable to load data. Check server logs.",
+                        style={"color":RED})
+        return ("Error refreshing data", "", [], [],
                 ef, ef, ef, ef, ef, ef, ef, err, err)
 
 
@@ -1144,12 +1142,10 @@ def refresh_rsi(_):
 
         return gauges, extremes_section, fig_grid, fig
 
-    except Exception as e:
-        tb  = traceback.format_exc()
-        err = html.Div([
-            html.Div(f"RSI Radar error: {e}", style={"color": RED}),
-            html.Pre(tb, style={"color": MUTED, "fontSize": "10px"}),
-        ])
+    except Exception:
+        print(f"RSI Radar refresh error:\n{traceback.format_exc()}")
+        err = html.Div("RSI Radar is temporarily unable to load data. Check server logs.",
+                        style={"color": RED})
         return [], err, empty_fig, empty_fig
 
 

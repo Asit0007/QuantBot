@@ -1,0 +1,29 @@
+# Never bake secrets or local state into image layers — see .gitignore
+.env
+.git
+.github
+
+# Runtime state / logs (written to the Docker volume at runtime, not baked in)
+*.log
+bot_state.json
+corpus_state.json
+trade_log.csv
+rsi_alert_state.json
+rsi_history.json
+bot_paused.flag
+
+# Local/OS/editor cruft
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.DS_Store
+.idea/
+.vscode/
+
+# Not needed inside the app image
+terraform/
+nginx/certs/
+nginx/htpasswd
+*.pdf
