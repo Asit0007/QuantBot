@@ -573,7 +573,7 @@ sudo docker exec quantbot_bot cat /app/data/trade_log.csv
 
 - **`.env` is gitignored** — never committed, created manually on the server
 - **`nginx/htpasswd` is gitignored** — same as `.env`, generated manually on the server, never synced via CI (see Dashboard Access below)
-- **Dashboard requires basic auth** — nginx enforces `auth_basic` on port 8888, which the Cloudflare Tunnel forwards to; the dashboard is reachable over the internet, so it isn't left open even though the OCI security list also restricts direct `:8888` access to one IP
+- **Dashboard is intentionally public** for now (building in public) — `auth_basic` is wired into `nginx.conf` but commented out; `dashboard.py` only ever renders balance/positions/trade history, never API keys or secrets, so this is a disclosure choice, not a credentials leak
 - **Telegram commands are sender-checked** — `notifier.py` verifies the incoming `chat_id` against `TELEGRAM_CHAT_ID` before acting, so only the configured chat can query balance/position or send `/pause`
 - **Terraform state** (`terraform.tfstate`, `terraform.tfvars`) is gitignored — contains resource IDs
 - **SSH access locked to specific IP** via OCI security list (`my_ip_cidr/32`)
@@ -585,7 +585,10 @@ sudo docker exec quantbot_bot cat /app/data/trade_log.csv
 
 ### Dashboard Access
 
-The dashboard is behind HTTP basic auth. Set the credentials directly on the server (never via CI, same as `.env`):
+The dashboard is currently public (no login) — `quantbot.asitminz.com` is open for anyone
+following along. To lock it back down behind HTTP basic auth, set credentials directly on
+the server (never via CI, same as `.env`), then uncomment the `auth_basic` /
+`auth_basic_user_file` lines in `nginx/nginx.conf` and redeploy:
 
 ```bash
 ssh -i ~/.ssh/quantbot_rsa ubuntu@YOUR_VM_IP
