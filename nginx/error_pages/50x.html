@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Unavailable · QuantBot</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surf: #161b22;
+    --border: #30363d;
+    --txt: #e6edf3;
+    --muted: #8b949e;
+    --grn: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--surf);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 36px 32px;
+    text-align: center;
+  }
+  .glyph {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 20px;
+    border-radius: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .glyph svg { width: 22px; height: 22px; }
+  h1 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 8px;
+  }
+  p {
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin: 0;
+  }
+  .code {
+    display: inline-block;
+    margin-top: 20px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    width: 100%;
+  }
+  .code b { color: var(--grn); font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="glyph">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20V10"></path>
+        <path d="M18 20V4"></path>
+        <path d="M6 20v-4"></path>
+      </svg>
+    </div>
+    <h1>Dashboard temporarily unavailable</h1>
+    <p>The service is restarting or redeploying. This usually clears in under a minute — reload shortly.</p>
+    <div class="code"><b>5xx</b> &nbsp;Bad Gateway</div>
+  </div>
+</body>
+</html>
