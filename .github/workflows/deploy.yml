@@ -129,6 +129,11 @@ jobs:
               else
                 sudo docker compose up -d
               fi
+              # nginx uses the stock image with nginx.conf/htpasswd/error_pages bind-
+              # mounted from disk — `compose up` only recreates a container when the
+              # *service definition* changes, so an nginx.conf-only edit is otherwise
+              # scp'd to disk but never reread by the running nginx process. Force it.
+              sudo docker compose up -d --force-recreate --no-deps nginx
               echo "Full rebuild complete"; exit 0
             fi
 
