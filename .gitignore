@@ -69,7 +69,10 @@ rsi_history.json
 backtest_*.py
 
 # Local agent / editor context
+# Both spellings listed explicitly: macOS is case-insensitive so one entry covers
+# both here, but a Linux checkout (CI) matches case-sensitively.
 CLAUDE.md
+claude.md
 .claude/
 .cursor/
 .aider*
