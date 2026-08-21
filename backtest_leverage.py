@@ -45,6 +45,27 @@ WHAT THIS ACTUALLY TESTS:
   lower-leverage nets out better or worse is exactly what running
   the real 6.5-year BTC data through the real signal will show.
 
+RUIN CHECK (added 2026-08-21) — READ THIS BEFORE COMPARING TO OLD OUTPUT:
+  Earlier runs of this script had NO bankruptcy check. Position size is
+  10% of CORPUS, and corpus only ratchets down after N CONSECUTIVE
+  losses, so a fast losing stretch kept risking a corpus-derived amount
+  larger than the balance actually left — driving `balance` negative and
+  continuing to trade. That is why the old output reported a "max
+  drawdown" above 100%: dd = (peak-eq)/peak only exceeds 100% when
+  equity goes negative.
+
+  Now: the moment balance hits <= 0 the account is declared RUINED,
+  equity is floored at 0 (an exchange liquidates you at the liquidation
+  price — you lose the margin posted, you do not end up owing money),
+  and the simulation STOPS. No DCA, no further trades, no recovery.
+  `ruin_overshoot` records how far below zero the unconstrained sim
+  would have gone; `max_margin_ratio` records the worst
+  required-margin / available-balance ratio reached (diagnostic only —
+  it does NOT cap trade size).
+
+  Consequence: terminal-equity and CAGR figures from before this change
+  assumed infinite margin and are not comparable to the numbers below.
+
 IDENTICAL FRAMEWORK ACROSS ALL TIERS:
   10% risk/trade, flat CB (5 losses -> 48h), DCA $10/mo +10%/yr,
   CorpusManager ratchet (10 trades) — only LEVERAGE and the two
@@ -212,9 +233,25 @@ def simulate(df: pd.DataFrame, leverage: int,
     stop_dists_pct = []
     liq_dist_pct   = 100.0 / leverage
 
+    # ── Ruin tracking ─────────────────────────────────────────────
+    # Without this the sim can drive `balance` below zero and keep
+    # trading: size is 10% of CORPUS, and corpus only ratchets down
+    # after 10 CONSECUTIVE losses, so a fast losing stretch keeps
+    # risking a corpus-derived amount larger than the balance that is
+    # actually left. That is what produced a >100% "max drawdown" —
+    # (peak-eq)/peak only exceeds 100% when eq goes negative.
+    # A real exchange liquidates instead. Model that: the account dies.
+    ruined         = False
+    ruin_ts        = None
+    ruin_bar       = None
+    ruin_overshoot = 0.0    # how far below zero it WOULD have gone
+    margin_ratios  = []     # required margin / balance at each entry
+
     rows = df.reset_index().to_dict('records')
 
     for i, row in enumerate(rows):
+        if ruined:
+            break          # account is dead — no DCA, no signals, no trades
         ts    = row.get('timestamp', row.get('index'))
         price = float(row['close'])
         atr   = float(row['atr']) if not (isinstance(row['atr'], float)
@@ -249,6 +286,7 @@ def simulate(df: pd.DataFrame, leverage: int,
 
         def close_pos(reason: str):
             nonlocal balance, total_fees, consec, cb_until, cb_count, pos
+            nonlocal ruined, ruin_ts, ruin_bar, ruin_overshoot
             ep      = price
             fee_out = ep * pos['qty'] * FEE_RATE
             if pos['side'] == 'long':
@@ -258,6 +296,16 @@ def simulate(df: pd.DataFrame, leverage: int,
             pnl = raw - pos['fee_in'] - fee_out
             total_fees += pos['fee_in'] + fee_out
             balance    += pnl
+            if balance <= 0 and not ruined:
+                # Account is gone. An exchange closes you out at the
+                # liquidation price — you lose the margin posted, you do
+                # not end up owing money — so floor equity at zero and
+                # record how far past zero the unconstrained sim went.
+                ruined         = True
+                ruin_ts        = ts
+                ruin_bar       = i
+                ruin_overshoot = balance
+                balance        = 0.0
             eq_curve.append((ts, balance))
             trades.append({
                 'date': ts, 'side': pos['side'], 'pnl': pnl,
@@ -295,26 +343,36 @@ def simulate(df: pd.DataFrame, leverage: int,
         in_cb = cb_until is not None and i < cb_until
 
         # ── 5. Entries — only if flat (can re-enter same candle) ──
-        if pos is None and not in_cb and atr > 0:
+        if pos is None and not in_cb and atr > 0 and not ruined:
+            side = stop = None
             if bull_armed > 0 and macd_bull and high_vol:
+                side = 'long'
                 stop = price - long_atr_mult * atr
                 stop_dist = max(abs(price - stop), price * 0.0001)
-                qty  = (corpus * BASE_RISK) / (stop_dist * leverage)
-                fee_in = price * qty * FEE_RATE
-                balance -= fee_in
-                total_fees += fee_in
-                pos = {'side': 'long', 'entry': price, 'stop': stop,
-                       'qty': qty, 'fee_in': fee_in, 'bar': i}
-
             elif bear_armed > 0 and macd_bear and high_vol:
+                side = 'short'
                 stop = price + short_atr_mult * atr
                 stop_dist = max(abs(stop - price), price * 0.0001)
-                qty  = (corpus * BASE_RISK) / (stop_dist * leverage)
+
+            if side is not None:
+                qty    = (corpus * BASE_RISK) / (stop_dist * leverage)
                 fee_in = price * qty * FEE_RATE
-                balance -= fee_in
+                # Diagnostic only — does NOT cap the trade. Shows how far
+                # the corpus-based size outruns the balance actually left.
+                if balance > 0:
+                    margin_ratios.append((qty * price / leverage) / balance)
+                balance    -= fee_in
                 total_fees += fee_in
-                pos = {'side': 'short', 'entry': price, 'stop': stop,
-                       'qty': qty, 'fee_in': fee_in, 'bar': i}
+                if balance <= 0:
+                    ruined         = True
+                    ruin_ts        = ts
+                    ruin_bar       = i
+                    ruin_overshoot = balance
+                    balance        = 0.0
+                    eq_curve.append((ts, balance))
+                else:
+                    pos = {'side': side, 'entry': price, 'stop': stop,
+                           'qty': qty, 'fee_in': fee_in, 'bar': i}
 
     eq_curve.append((None, balance))
     avg_stop_pct = float(np.mean(stop_dists_pct)) if stop_dists_pct else 0.0
@@ -323,6 +381,9 @@ def simulate(df: pd.DataFrame, leverage: int,
         'total_inv': total_inv, 'total_fees': total_fees,
         'cb_count': cb_count, 'avg_stop_pct': avg_stop_pct,
         'liq_dist_pct': liq_dist_pct,
+        'ruined': ruined, 'ruin_ts': ruin_ts, 'ruin_bar': ruin_bar,
+        'ruin_overshoot': ruin_overshoot,
+        'max_margin_ratio': (float(max(margin_ratios)) if margin_ratios else 0.0),
     }
 
 
@@ -339,7 +400,10 @@ def metrics(result: dict, years: float) -> dict:
                 'total_inv':result['total_inv'],
                 'total_fees':result['total_fees'],
                 'avg_stop_pct':result['avg_stop_pct'],
-                'liq_dist_pct':result['liq_dist_pct']}
+                'liq_dist_pct':result['liq_dist_pct'],
+                'ruined':result['ruined'],'ruin_ts':result['ruin_ts'],
+                'ruin_overshoot':result['ruin_overshoot'],
+                'max_margin_ratio':result['max_margin_ratio']}
     pnls  = [t['pnl'] for t in T]
     wins  = [p for p in pnls if p > 0]
     loss  = [p for p in pnls if p <= 0]
@@ -371,7 +435,10 @@ def metrics(result: dict, years: float) -> dict:
             'total_inv':result['total_inv'],
             'total_fees':result['total_fees'],
             'avg_stop_pct':result['avg_stop_pct'],
-            'liq_dist_pct':result['liq_dist_pct']}
+            'liq_dist_pct':result['liq_dist_pct'],
+            'ruined':result['ruined'],'ruin_ts':result['ruin_ts'],
+            'ruin_overshoot':result['ruin_overshoot'],
+            'max_margin_ratio':result['max_margin_ratio']}
 
 
 def pf_i(v):  return "🟢" if v>=1.5 else("🟡" if v>=1.0 else"🔴")
@@ -393,6 +460,17 @@ def print_tier_detail(label, leverage, result, m, years):
     if m['n'] == 0:
         print(f"  ❌ No trades.")
         return
+
+    if m['ruined']:
+        rd = str(m['ruin_ts'])[:10] if m['ruin_ts'] is not None else "?"
+        print(f"\n  {'💀'*22}")
+        print(f"  ACCOUNT RUINED on {rd} — balance hit zero after "
+              f"{m['n']} trades.")
+        print(f"  Unconstrained sim would have gone to "
+              f"${m['ruin_overshoot']:,.2f} and kept trading.")
+        print(f"  Everything below is the run UP TO ruin. There is no "
+              f"recovery — the run stops here.")
+        print(f"  {'💀'*22}")
 
     print(f"\n  ╔{'═'*58}╗")
     print(f"  ║  {'Invested (inc DCA):':<26} ${m['total_inv']:>27,.2f}  ║")
@@ -416,6 +494,9 @@ def print_tier_detail(label, leverage, result, m, years):
     print(f"  ╠{'═'*58}╣")
     print(f"  ║  {'Avg realized stop dist:':<26} {m['avg_stop_pct']:>27.2f}%  ║")
     print(f"  ║  {'Liquidation distance:':<26} {m['liq_dist_pct']:>27.2f}%  ║")
+    mmr = m['max_margin_ratio']
+    mmr_i = "🟢" if mmr <= 1.0 else ("🟡" if mmr <= 2.0 else "🔴")
+    print(f"  ║  {'Peak margin / balance:':<26} {mmr_i}{mmr:>26.2f}×  ║")
     safety_ratio = m['avg_stop_pct']/m['liq_dist_pct']*100 if m['liq_dist_pct']>0 else 0
     print(f"  ║  {'Stop uses % of liq buffer:':<26} "
           f"{safe_i(m['avg_stop_pct'], m['liq_dist_pct'])}{safety_ratio:>26.1f}%  ║")
@@ -487,10 +568,12 @@ def main():
         t22    = sum(t['pnl'] for t in result['trades']
                      if hasattr(t['date'],'year') and t['date'].year==2022)
         all_results[label] = (result, m, leverage)
+        ruin_tag = (f"  💀 RUINED {str(m['ruin_ts'])[:10]}"
+                    if m.get('ruined') else "")
         print(f"     ${m['final']:>9,.0f}  {m['annual']:>+6.1f}%/yr  "
               f"DD:{m['dd']:>5.1f}%  R/DD:{rdd:.2f}×  "
               f"N:{m['n']}  WR:{m['wr']:.1f}%  PF:{m['pf']:.2f}  "
-              f"avg_stop:{m['avg_stop_pct']:.2f}%  2022:${t22:>+.0f}")
+              f"avg_stop:{m['avg_stop_pct']:.2f}%  2022:${t22:>+.0f}{ruin_tag}")
 
     # ── Full detail per tier ──────────────────────────────────────
     print(f"\n\n{'═'*66}")
@@ -505,11 +588,15 @@ def main():
     print("  📊 MASTER COMPARISON — leverage/stop-width tiers")
     print(f"{'═'*100}")
     print(f"  {'Tier':<15} {'Final':>9} {'Ann%':>7} {'PF':>6} {'DD':>6} "
-          f"{'R/DD':>6} {'N':>5} {'WR':>5} {'Stop%':>6} {'AvgStopDist':>12} {'2022':>8}")
-    print(f"  {'─'*98}")
+          f"{'R/DD':>6} {'N':>5} {'WR':>5} {'Stop%':>6} {'AvgStopDist':>12} "
+          f"{'2022':>8}  {'Ruin':<12}")
+    print(f"  {'─'*112}")
 
-    best_final = max(all_results.items(), key=lambda x: x[1][1]['final'])
-    best_rdd   = max(all_results.items(),
+    # A ruined tier cannot be "best" at anything — exclude them outright.
+    survivors = {k: v for k, v in all_results.items()
+                 if not v[1].get('ruined')} or all_results
+    best_final = max(survivors.items(), key=lambda x: x[1][1]['final'])
+    best_rdd   = max(survivors.items(),
                      key=lambda x: (abs(x[1][1]['annual'])/x[1][1]['dd']
                                     if x[1][1]['dd']>0 else 0))
 
@@ -519,13 +606,17 @@ def main():
         t22 = sum(t['pnl'] for t in result['trades']
                   if hasattr(t['date'],'year') and t['date'].year==2022)
         mk = ""
-        if label == best_final[0]: mk += " ← best $"
-        if label == best_rdd[0]:   mk += " ← best R/DD"
+        if m.get('ruined'):
+            mk = "  💀"
+        else:
+            if label == best_final[0]: mk += " ← best $"
+            if label == best_rdd[0]:   mk += " ← best R/DD"
+        ruin_col = (str(m['ruin_ts'])[:10] if m.get('ruined') else "survived")
         print(f"  {label:<15} ${m['final']:>8,.0f} "
               f"{m['annual']:>+5.1f}% {pf_i(m['pf'])}{m['pf']:>4.2f} "
               f"{dd_i(m['dd'])}{m['dd']:>4.1f}% {rd_i(rdd)}{rdd:>4.2f}× "
               f"{m['n']:>5} {m['wr']:>4.1f}% {m['stop_pct']:>5.0f}% "
-              f"{m['avg_stop_pct']:>10.2f}%  ${t22:>+7.0f}{mk}")
+              f"{m['avg_stop_pct']:>10.2f}%  ${t22:>+7.0f}  {ruin_col:<12}{mk}")
 
     print(f"\n{'═'*100}")
     print(f"  📌 20x baseline for reference: $4,699  +45.0%/yr  DD 28.5%  "
@@ -534,11 +625,15 @@ def main():
 
     # ── Verdict ────────────────────────────────────────────────────
     print(f"\n  Ranking by final balance (highest first):")
-    ranked = sorted(all_results.items(), key=lambda x: -x[1][1]['final'])
+    ranked = sorted(all_results.items(),
+                    key=lambda x: (x[1][1].get('ruined', False),
+                                   -x[1][1]['final']))
     for i, (label, (result, m, lev)) in enumerate(ranked, 1):
         rdd = abs(m['annual'])/m['dd'] if m['dd']>0 else 0
+        tag = (f"  💀 RUINED {str(m['ruin_ts'])[:10]}"
+               if m.get('ruined') else "")
         print(f"    {i}. {label:<15} ${m['final']:>9,.0f}  "
-              f"WR {m['wr']:.1f}%  R/DD {rdd:.2f}×")
+              f"WR {m['wr']:.1f}%  R/DD {rdd:.2f}×{tag}")
 
     print(f"\n  ── PARAMETERS USED ─────────────────────────────────────────")
     for label, leverage, mult_scale in TIERS:

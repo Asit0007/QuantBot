@@ -24,6 +24,27 @@ VARIANTS TESTED:
   2/2 (proposed)  2           2            proposed improvement
   2/10 (asymm)    2          10            grow fast, shrink slowly
 
+RUIN CHECK (added 2026-08-21) — READ THIS BEFORE COMPARING TO OLD OUTPUT:
+  Earlier runs of this script had NO bankruptcy check. Position size is
+  10% of CORPUS, and corpus only ratchets down after N CONSECUTIVE
+  losses, so a fast losing stretch kept risking a corpus-derived amount
+  larger than the balance actually left — driving `balance` negative and
+  continuing to trade. That is why the old output reported a "max
+  drawdown" above 100%: dd = (peak-eq)/peak only exceeds 100% when
+  equity goes negative.
+
+  Now: the moment balance hits <= 0 the account is declared RUINED,
+  equity is floored at 0 (an exchange liquidates you at the liquidation
+  price — you lose the margin posted, you do not end up owing money),
+  and the simulation STOPS. No DCA, no further trades, no recovery.
+  `ruin_overshoot` records how far below zero the unconstrained sim
+  would have gone; `max_margin_ratio` records the worst
+  required-margin / available-balance ratio reached (diagnostic only —
+  it does NOT cap trade size).
+
+  Consequence: terminal-equity and CAGR figures from before this change
+  assumed infinite margin and are not comparable to the numbers below.
+
 USAGE:
   python backtest_ratchet.py
 
@@ -191,9 +212,22 @@ def simulate(df: pd.DataFrame, ratchet_up: int, ratchet_down: int) -> dict:
 
     stop_dists_pct = []
 
+    # ── Ruin tracking (see backtest_leverage.py for the full rationale) ──
+    # Size is 10% of CORPUS and corpus only ratchets down after N
+    # CONSECUTIVE losses, so without this the sim drives `balance` below
+    # zero and keeps trading — which is what made "max drawdown" exceed
+    # 100%. A real exchange liquidates. Model that: the account dies.
+    ruined         = False
+    ruin_ts        = None
+    ruin_bar       = None
+    ruin_overshoot = 0.0
+    margin_ratios  = []
+
     rows = df.reset_index().to_dict('records')
 
     for i, row in enumerate(rows):
+        if ruined:
+            break          # account is dead — no DCA, no signals, no trades
         ts    = row.get('timestamp', row.get('index'))
         price = float(row['close'])
         atr   = float(row['atr']) if not (isinstance(row['atr'], float)
@@ -228,6 +262,7 @@ def simulate(df: pd.DataFrame, ratchet_up: int, ratchet_down: int) -> dict:
 
         def close_pos(reason: str):
             nonlocal balance, total_fees, consec, cb_until, cb_count, pos
+            nonlocal ruined, ruin_ts, ruin_bar, ruin_overshoot
             ep      = price
             fee_out = ep * pos['qty'] * FEE_RATE
             if pos['side'] == 'long':
@@ -237,6 +272,16 @@ def simulate(df: pd.DataFrame, ratchet_up: int, ratchet_down: int) -> dict:
             pnl = raw - pos['fee_in'] - fee_out
             total_fees += pos['fee_in'] + fee_out
             balance    += pnl
+            if balance <= 0 and not ruined:
+                # Liquidation closes you out at the liquidation price: you
+                # lose the margin posted, you do not end up owing money.
+                # Floor equity at zero, record how far past zero the
+                # unconstrained sim would have gone.
+                ruined         = True
+                ruin_ts        = ts
+                ruin_bar       = i
+                ruin_overshoot = balance
+                balance        = 0.0
             eq_curve.append((ts, balance))
             trades.append({
                 'date': ts, 'side': pos['side'], 'pnl': pnl,
@@ -274,26 +319,35 @@ def simulate(df: pd.DataFrame, ratchet_up: int, ratchet_down: int) -> dict:
         in_cb = cb_until is not None and i < cb_until
 
         # 5. Entries — only when flat; can re-enter same candle after exit
-        if pos is None and not in_cb and atr > 0:
+        if pos is None and not in_cb and atr > 0 and not ruined:
+            side = stop = None
             if bull_armed > 0 and macd_bull and high_vol:
+                side      = 'long'
                 stop      = price - LONG_ATR_MULT * atr
                 stop_dist = max(abs(price - stop), price * 0.0001)
-                qty       = (corpus * BASE_RISK) / (stop_dist * LEVERAGE)
-                fee_in    = price * qty * FEE_RATE
-                balance  -= fee_in
-                total_fees += fee_in
-                pos = {'side': 'long', 'entry': price, 'stop': stop,
-                       'qty': qty, 'fee_in': fee_in, 'bar': i}
-
             elif bear_armed > 0 and macd_bear and high_vol:
+                side      = 'short'
                 stop      = price + SHORT_ATR_MULT * atr
                 stop_dist = max(abs(stop - price), price * 0.0001)
-                qty       = (corpus * BASE_RISK) / (stop_dist * LEVERAGE)
-                fee_in    = price * qty * FEE_RATE
-                balance  -= fee_in
+
+            if side is not None:
+                qty    = (corpus * BASE_RISK) / (stop_dist * LEVERAGE)
+                fee_in = price * qty * FEE_RATE
+                # Diagnostic only — does NOT cap the trade.
+                if balance > 0:
+                    margin_ratios.append((qty * price / LEVERAGE) / balance)
+                balance    -= fee_in
                 total_fees += fee_in
-                pos = {'side': 'short', 'entry': price, 'stop': stop,
-                       'qty': qty, 'fee_in': fee_in, 'bar': i}
+                if balance <= 0:
+                    ruined         = True
+                    ruin_ts        = ts
+                    ruin_bar       = i
+                    ruin_overshoot = balance
+                    balance        = 0.0
+                    eq_curve.append((ts, balance))
+                else:
+                    pos = {'side': side, 'entry': price, 'stop': stop,
+                           'qty': qty, 'fee_in': fee_in, 'bar': i}
 
     eq_curve.append((None, balance))
     avg_stop_pct = float(np.mean(stop_dists_pct)) if stop_dists_pct else 0.0
@@ -301,6 +355,9 @@ def simulate(df: pd.DataFrame, ratchet_up: int, ratchet_down: int) -> dict:
         'trades': trades, 'eq_curve': eq_curve, 'final': balance,
         'total_inv': total_inv, 'total_fees': total_fees,
         'cb_count': cb_count, 'avg_stop_pct': avg_stop_pct,
+        'ruined': ruined, 'ruin_ts': ruin_ts, 'ruin_bar': ruin_bar,
+        'ruin_overshoot': ruin_overshoot,
+        'max_margin_ratio': (float(max(margin_ratios)) if margin_ratios else 0.0),
     }
 
 
@@ -309,10 +366,14 @@ def metrics(result: dict, years: float) -> dict:
     T = result['trades']
     n = len(T)
     if n == 0:
-        return {k: 0 for k in ['n','pf','wr','dd','ret','annual','final',
-                                'ml','sharpe','stop_pct','signal_pct',
-                                'longs','shorts','avg_w','avg_l','cb_count',
-                                'net_profit','total_inv','total_fees','avg_stop_pct']}
+        z = {k: 0 for k in ['n','pf','wr','dd','ret','annual','final',
+                            'ml','sharpe','stop_pct','signal_pct',
+                            'longs','shorts','avg_w','avg_l','cb_count',
+                            'net_profit','total_inv','total_fees','avg_stop_pct']}
+        z.update({'ruined': result['ruined'], 'ruin_ts': result['ruin_ts'],
+                  'ruin_overshoot': result['ruin_overshoot'],
+                  'max_margin_ratio': result['max_margin_ratio']})
+        return z
 
     pnls   = [t['pnl'] for t in T]
     wins   = [p for p in pnls if p > 0]
@@ -354,6 +415,9 @@ def metrics(result: dict, years: float) -> dict:
         'total_inv':   result['total_inv'],
         'total_fees':  result['total_fees'],
         'avg_stop_pct': result['avg_stop_pct'],
+        'ruined': result['ruined'], 'ruin_ts': result['ruin_ts'],
+        'ruin_overshoot': result['ruin_overshoot'],
+        'max_margin_ratio': result['max_margin_ratio'],
     }
 
 
@@ -383,6 +447,17 @@ def print_variant_detail(label: str, ratchet_up: int, ratchet_down: int,
     if m['n'] == 0:
         print("  ❌ No trades.")
         return
+
+    if m['ruined']:
+        rd_ = str(m['ruin_ts'])[:10] if m['ruin_ts'] is not None else "?"
+        print(f"\n  {'💀'*23}")
+        print(f"  ACCOUNT RUINED on {rd_} — balance hit zero after "
+              f"{m['n']} trades.")
+        print(f"  Unconstrained sim would have gone to "
+              f"${m['ruin_overshoot']:,.2f} and kept trading.")
+        print(f"  Peak margin required / balance available: "
+              f"{m['max_margin_ratio']:.2f}×")
+        print(f"  {'💀'*23}")
 
     print(f"\n  ╔{'═'*62}╗")
     print(f"  ║  {'Invested (inc DCA):':<28} ${m['total_inv']:>29,.2f}  ║")
@@ -505,9 +580,12 @@ def main():
           f"{'StopEx':>7} {'SigEx':>6} {'2022':>9}  {'AvgStop':>8}")
     print(f"  {'─'*(W-2)}")
 
-    best_final = max(all_results.items(), key=lambda x: x[1][1]['final'])
-    best_pf    = max(all_results.items(), key=lambda x: x[1][1]['pf'])
-    best_rdd   = max(all_results.items(),
+    # A ruined variant cannot be "best" at anything — exclude them.
+    survivors  = {k: v for k, v in all_results.items()
+                  if not v[1].get('ruined')} or all_results
+    best_final = max(survivors.items(), key=lambda x: x[1][1]['final'])
+    best_pf    = max(survivors.items(), key=lambda x: x[1][1]['pf'])
+    best_rdd   = max(survivors.items(),
                      key=lambda x: (abs(x[1][1]['annual']) / x[1][1]['dd']
                                     if x[1][1]['dd'] > 0 else 0))
 
@@ -517,9 +595,12 @@ def main():
         t22  = sum(t['pnl'] for t in result['trades']
                    if hasattr(t['date'], 'year') and t['date'].year == 2022)
         tags = []
-        if label == best_final[0]: tags.append("best $")
-        if label == best_pf[0]:    tags.append("best PF")
-        if label == best_rdd[0]:   tags.append("best R/DD")
+        if m.get('ruined'):
+            tags.append(f"💀 RUINED {str(m['ruin_ts'])[:10]}")
+        else:
+            if label == best_final[0]: tags.append("best $")
+            if label == best_pf[0]:    tags.append("best PF")
+            if label == best_rdd[0]:   tags.append("best R/DD")
         tag = " ← " + " + ".join(tags) if tags else ""
 
         print(f"  {label:<22} {ru:>3} {rd:>3} "
@@ -547,14 +628,18 @@ def main():
 
     # ── Verdict ───────────────────────────────────────────────────
     print(f"\n  Ranking by final balance:")
-    ranked = sorted(all_results.items(), key=lambda x: -x[1][1]['final'])
+    ranked = sorted(all_results.items(),
+                    key=lambda x: (x[1][1].get('ruined', False),
+                                   -x[1][1]['final']))
     for i, (label, (result, m, ru, rd)) in enumerate(ranked, 1):
         rdd = abs(m['annual']) / m['dd'] if m['dd'] > 0 else 0.0
         t22 = sum(t['pnl'] for t in result['trades']
                   if hasattr(t['date'], 'year') and t['date'].year == 2022)
+        tag = (f"  💀 RUINED {str(m['ruin_ts'])[:10]}"
+               if m.get('ruined') else "")
         print(f"    {i}. {label:<22}  ${m['final']:>9,.0f}  "
               f"PF {m['pf']:.2f}  WR {m['wr']:.1f}%  "
-              f"R/DD {rdd:.2f}×  2022: ${t22:>+,.0f}")
+              f"R/DD {rdd:.2f}×  2022: ${t22:>+,.0f}{tag}")
 
     print(f"\n  ── PARAMETERS ────────────────────────────────────────────────")
     print(f"  Leverage: {LEVERAGE}x  LONG_ATR: {LONG_ATR_MULT}  SHORT_ATR: {SHORT_ATR_MULT}")
