@@ -1398,7 +1398,7 @@ def main(go_live: bool = False):
              f"{SYMBOL} {TIMEFRAME} {LEVERAGE}×  {RISK_PER_TRADE*100:.0f}% risk")
     if NOSTOP:
         log.info(f"  EXIT: no stop-loss — margin IS the max loss "
-                 f"(${RISK_PER_TRADE*100:.0f}% of corpus), liquidation "
+                 f"({RISK_PER_TRADE*100:.0f}% of corpus), liquidation "
                  f"~{100.0/LEVERAGE - MAINT_MARGIN_RATE*100:.1f}% away")
     else:
         log.info(f"  EXIT: ATR stop ×{LONG_ATR_MULT}L/×{SHORT_ATR_MULT}S  "
