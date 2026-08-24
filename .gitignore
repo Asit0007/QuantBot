@@ -65,8 +65,19 @@ bot_paused.flag
 notifier.log
 rsi_history.json
 
-# Backtest research scripts — local only
+# Backtest research scripts — local only.
+# Both the loose scripts and the backtest/ folder they were collected into.
+# Everything here is research: it reads market data, writes no state, and is
+# imported by nothing in production. It never goes to GitHub.
 backtest_*.py
+backtest/
+backtest/**
+
+# Backtest OHLCV cache — derived market data, rebuilt on demand by
+# ohlcv_cache.py. Hundreds of MB of candles; never belongs in git.
+data_cache/
+*_ohlcv.csv
+ohlcv_cache/
 
 # Local agent / editor context
 # Both spellings listed explicitly: macOS is case-insensitive so one entry covers

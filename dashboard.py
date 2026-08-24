@@ -44,12 +44,23 @@ TRADE_LOG   = os.path.join(DATA_DIR, "trade_log.csv")
 RSI_HISTORY = os.path.join(DATA_DIR, "rsi_history.json")
 REFRESH_MS  = int(os.getenv("DASHBOARD_REFRESH_MS", "15000"))
 DASH_PORT   = int(os.getenv("DASHBOARD_PORT", "8050"))
-LEVERAGE    = int(os.getenv("LEVERAGE", "5"))  # must match bot.py — used for "Invested $"
+# Must match bot.py's LEVERAGE — used to derive "Invested $" (the margin
+# Binance locks) from the logged quantity: qty x entry / LEVERAGE.
+# Rows written before the 2026-08-24 sizing fix stored a quantity that was
+# 1/LEVERAGE of the real position, so their "Invested $" reads LEVERAGE x
+# too small. Post-fix rows are correct.
+LEVERAGE    = int(os.getenv("LEVERAGE", "5"))
 DASH_HOST   = os.getenv("DASHBOARD_HOST", "127.0.0.1")
 
-# ── Benchmarks from backtest_ratchet.py (5x/10-10 tier — matches live config) ──
-BENCH_WR = 0.367
-BENCH_PF = 1.60
+# ── Benchmarks — MUST match bot.py's, and both switch with EXIT_MODEL ──
+# nostop: backtest_nostop.py, BTC 15m 5x, 6.9yr — PF 1.63, WR 54.0%.
+# stop:   backtest_leverage.py 5x, corrected engine — PF 1.16, WR 27.1%.
+# The old 0.367 / 1.60 came from a run that traded through a negative
+# balance and under-counted fees by a factor of leverage.
+EXIT_MODEL = os.getenv("EXIT_MODEL", "stop").strip().lower()
+NOSTOP     = EXIT_MODEL == "nostop"
+BENCH_WR = 0.540 if NOSTOP else 0.271
+BENCH_PF = 1.63 if NOSTOP else 1.16
 
 # ── Theme ─────────────────────────────────────────────────────────
 BG    = "#0d1117"
@@ -124,7 +135,9 @@ def load_trades() -> pd.DataFrame:
         # Derived columns — computed from fields already logged by bot.py,
         # so these populate correctly even for historic trades.
         if "quantity_btc" in df.columns and "entry_price" in df.columns:
-            df["invested_usd"] = (df["quantity_btc"] * df["entry_price"] / LEVERAGE).round(2)
+            # Margin actually locked = notional / leverage.
+            df["notional_usd"] = (df["quantity_btc"] * df["entry_price"]).round(2)
+            df["invested_usd"] = (df["notional_usd"] / LEVERAGE).round(2)
         if "entry_price" in df.columns and "stop_price" in df.columns:
             df["sl_pct"] = (
                 (df["entry_price"] - df["stop_price"]).abs() / df["entry_price"] * 100
@@ -672,7 +685,12 @@ def refresh(_):
                       "sl_pct","invested_usd","pnl_usd","fees_usd","balance",
                       "reason","hold_candles","mode"]
             labels = {"date_str":"Date","side":"Side","entry_price":"Entry $",
-                      "exit_price":"Exit $","stop_price":"Stop $","sl_pct":"SL %",
+                      "exit_price":"Exit $",
+                      # In nostop mode the bot writes the LIQUIDATION price
+                      # into stop_price — same meaning ("where this trade
+                      # dies"), different mechanism — so label it honestly.
+                      "stop_price": "Liq $" if NOSTOP else "Stop $",
+                      "sl_pct": "Liq %" if NOSTOP else "SL %",
                       "invested_usd":"Invested $","pnl_usd":"P&L $",
                       "fees_usd":"Fees $","balance":"Balance $","reason":"Reason",
                       "hold_candles":"Hold (c)","mode":"Mode"}

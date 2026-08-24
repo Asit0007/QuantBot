@@ -39,13 +39,13 @@
 > **Paper trading in production.** The full stack is deployed, healthy, and processing every
 > closed 15-minute candle on Oracle Cloud. **No real capital is at risk yet.**
 > The go-live gate is 20+ paper trades landing within ±20% of the backtested
-> **36.7% win rate / 1.60 profit factor** — see [Going Live](#-going-live).
+> **54.0% win rate / 1.63 profit factor** — see [Going Live](#-going-live).
 
 | | |
 | --- | --- |
 | **Mode** | `PAPER_TRADE=true` — simulated fills, no exchange orders |
-| **Live config** | BTC/USDT perp · 15m candles · **5× isolated** · 10% corpus risk/trade |
-| **Backtest (6.5 yr)** | PF **1.60** · WR **36.7%** · $100 → **$9,347** · Sep 2019 → Mar 2026 — [read the drawdown caveat](#the-decisive-result-5-beats-20) |
+| **Live config** | BTC/USDT perp · 15m candles · **5× isolated** · no stop-loss · 10% corpus margin/trade |
+| **Backtest (6.9 yr)** | PF **1.63** · WR **54.0%** · $100 → **$2,566** · Sep 2019 → Aug 2026 — [ruin-checked engine](#the-decisive-result-5-beats-20) |
 | **Dashboard** | [quantbot.asitminz.com](https://quantbot.asitminz.com) — public, read-only, no auth (deliberate) |
 | **Infrastructure** | OCI `VM.Standard.A1.Flex` (1 OCPU / 6 GB ARM) · **$0/month** |
 | **Deploys** | Push to `main` → lint → selective container rebuild → health check |
@@ -222,7 +222,7 @@ single inbound port** and keeps the VM's public IP out of DNS.
 ### Three gates, one candle
 
 An entry requires **all three gates to fire on the same closed 15-minute candle**. This
-selectivity is the whole edge — it is what makes a 36.7% win rate profitable.
+selectivity is the whole edge — roughly 18 trades a year, held ~18 days each.
 
 ```
 Gate 1 — RSI(14) Divergence          armed for DIV_MEMORY = 3 candles
@@ -303,31 +303,37 @@ are scaled by `20/leverage` so risk-to-liquidation stays constant across tiers.
 
 | Tier | ATR stops (L/S) | Terminal equity | CAGR | Profit factor | Win rate | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| 20× | 2.0× / 1.5× | $4,699 | +45%/yr | 1.78 | 12.4% | superseded |
-| **5×** | **8.0× / 6.0×** | **$9,347** | **+90.7%/yr** | **1.60** | **36.7%** | ✅ **in production** |
+| 20× | 2.0× / 1.5× | $789 | −5.7%/yr | 0.92 | 12.9% | rejected |
+| 5× | 8.0× / 6.0× | $2,847 | +16.8%/yr | 1.16 | 27.1% | rejected — see below |
+| **5× no-stop** | **none — liquidation only** | **$2,566** | **+16.8%/yr** | **1.63** | **54.0%** | ✅ **selected** |
 
-Wider stops trade a *lower* profit factor for a *far* higher win rate and roughly double the
-terminal equity — fewer trades die to whipsaw noise before the thesis plays out.
+Lower leverage is strictly better across every tier. But the stop-based model was rejected
+outright on 2026-08-24: it fails three of four robustness tests, and its **entire 6.9-year net
+profit is a single trade** (+$1,674 of +$1,540 — remove it and the strategy is net negative).
+The model that survived removes the stop-loss entirely and sizes the *margin* instead, so
+isolated-margin liquidation caps the loss at 10% of corpus by construction.
 
-> [!WARNING]
-> **Read this before believing the headline number.**
+> [!IMPORTANT]
+> **These numbers replaced an earlier, wrong set. Here is what was wrong.**
 >
-> The 5× run reports a **max drawdown of 184.2%**. A drawdown above 100% is not a formatting
-> quirk — the backtest computes `(peak − equity) / peak`, so exceeding 100% means **simulated
-> equity went negative at some point on the path.**
+> This README previously headlined **`$100 → $9,347, +90.7%/yr, PF 1.60`** alongside a
+> *184.2% max drawdown*. A drawdown above 100% is not a formatting quirk: `(peak − equity)/peak`
+> only exceeds 100% when **simulated equity went negative** — the account had gone bankrupt and
+> the backtest kept trading it. Three faults, all fixed on 2026-08-24:
 >
-> The cause is structural: the backtest has **no bankruptcy or margin-call check**. Position size
-> is 10% of *corpus*, and corpus only ratchets down after 10 *consecutive* losses — so during a
-> sharp losing stretch the sim can keep risking a corpus-derived amount larger than the balance
-> that is actually left, drive the balance below zero, and carry on trading. A real exchange
-> would have liquidated the account and the run would have ended there.
+> 1. **Phantom leverage.** P&L was `(exit − entry) × qty × LEVERAGE` while sizing divided by
+>    `LEVERAGE`. The two cancelled for loss-at-stop, so the bug hid for months — but it made the
+>    stored quantity, the margin, and the dashboard's "Invested $" all wrong by 20×, and live
+>    mode would have sent Binance an order 20× too small.
+> 2. **Fees on a fake notional.** Because quantity was `1/LEVERAGE` of the real position, fees —
+>    a fraction of notional — came out **20× too cheap**. This scales with trade count, so it
+>    silently subsidised every high-frequency idea in the research history.
+> 3. **No bankruptcy check and no margin cap.** Sizing is 10% of *corpus*, and corpus only
+>    ratchets down after 10 *consecutive* losses, so a losing streak kept risking more than the
+>    balance left.
 >
-> **What this means in practice:** `$100 → $9,347` is the return of a path that includes a
-> stretch no real account would have survived. Treat the win rate, profit factor, and per-trade
-> distribution as the trustworthy outputs of these backtests, and treat the terminal-equity and
-> CAGR figures as an upper bound that assumes infinite margin. Adding a ruin check and re-running
-> both sweeps is [on the roadmap](#-roadmap) and is a gate on deploying real capital — it is the
-> reason the live account starts at $100 rather than at a size that would hurt to lose.
+> With a ruin check and a margin-affordability cap in place, no tier goes bankrupt any more.
+> The figures above are from the corrected engine and are the ones this repo now stands behind.
 
 ### Per-year regime breakdown
 
@@ -351,26 +357,41 @@ terminal equity — fewer trades die to whipsaw noise before the thesis plays ou
 | Symbol | `BTC/USDT` perp | Deepest liquidity, tightest spreads |
 | Timeframe | `15m` | Signal quality vs. noise; one decision per candle is the design ceiling |
 | Leverage | **5×** isolated | Best terminal equity of 5 tiers tested |
-| Risk per trade | 10% of corpus | Validated across the full 6.5 years |
-| ATR stop — long | `8.0×` ATR(14) | Scaled 4× from the 2.0× base of the 20× tier |
-| ATR stop — short | `6.0×` ATR(14) | Scaled 4× from the 1.5× base; asymmetric because downside moves are faster |
+| Exit model | `EXIT_MODEL=nostop` | No stop-loss. Margin **is** the max loss; liquidation is the only forced exit |
+| Margin per trade | 10% of corpus | Isolated margin caps the loss there by construction |
+| Liquidation distance | ~19.6% | `1/leverage` minus the 0.4% maintenance margin rate |
 | Circuit breaker | 5 losses → 48h | Flat pause; beat all 4 progressive-scaling variants |
-| Ratchet | 10 up / 10 down | Beat 5/5, 2/2, and 2/10 asymmetric at the 5× tier |
+| Ratchet | 10 up / 10 down | Baseline; 5/5 scored better on the corrected engine and is untested live |
 | Fee model | 0.05% per side (taker) | Binance futures taker rate, charged on entry and exit |
-| Win rate | **36.7%** | Benchmark for the go-live gate |
-| Profit factor | **1.60** | Gross profit ÷ gross loss |
-| Total return | **$100 → $9,347** (+90.7%/yr) | 6.5 yr, `backtest_ratchet.py`, ratchet 10/10 |
+| Funding | Real 8h history | ~18-day average holds make funding a first-order cost |
+| Win rate | **54.0%** | Benchmark for the go-live gate |
+| Profit factor | **1.63** | Gross profit ÷ gross loss |
+| Total return | **$100 → $2,566** (+16.8%/yr) | 6.9 yr, `backtest_nostop.py`, BTC 15m 5× |
 
-`BENCH_WR = 0.367` and `BENCH_PF = 1.60` are hardcoded in **both** `bot.py` and `dashboard.py`.
-If the config ever changes, both must change together. In paper mode the bot prints a live-vs-
-benchmark comparison every 5 trades once 20 trades exist.
+`BENCH_WR` and `BENCH_PF` live in **both** `bot.py` and `dashboard.py` and switch with
+`EXIT_MODEL` (nostop → 0.540 / 1.63; stop → 0.271 / 1.16). In paper mode the bot prints a
+live-vs-benchmark comparison every 5 trades once 20 trades exist.
+
+The live code path is **verified against the backtest**: replaying 6.9 years of real candles
+through `bot.py`'s own `process()` reproduces `backtest_nostop.py` exactly — same 126 trades,
+same 53.97% win rate, same PF 1.63, same $2,566.37 final balance, zero divergent trades. That
+matters because the go-live gate is a paper-vs-backtest comparison, which is meaningless unless
+the two engines agree.
 
 ### Methodology
 
+The research scripts are local-only (`backtest/` is gitignored — market-data research, not
+product). What each one settled:
+
 | Script | Question it isolates | Result |
 | --- | --- | --- |
-| [`backtest_leverage.py`](backtest_leverage.py) | Same signal at 5 leverage/stop-width tiers (20× / 15× / 10× / 7× / 5×), ATR multipliers scaled by `20/lev` so risk-to-liquidation is constant | **5× wins** — $9,347 vs $4,699. Switched production from 20× to 5×. |
-| [`backtest_ratchet.py`](backtest_ratchet.py) | Corpus ratchet frequency at the winning 5× tier: 10/10, 5/5, 2/2, 2/10 asymmetric | **10/10 baseline kept** — what production runs today |
+| `backtest_leverage.py` | Same signal at 5 leverage/stop-width tiers, ATR multipliers scaled by `20/lev` | Lower leverage strictly better; every tier ruins without a margin cap |
+| `backtest_ratchet.py` | Corpus ratchet frequency: 10/10, 5/5, 2/2, 2/10 | 5/5 best on the corrected engine; 10/10 still what runs |
+| `backtest_nostop.py` | Drop the stop, size the margin, let liquidation be the only forced exit | **PF 1.63, 25.5% max DD, fees $64 vs $581** — the selected config |
+| `backtest_timeframe.py` | 15m vs 30m / 1h / 4h | The edge tracks a **~1–5h wall-clock window**, not the 15m bar — 30m time-matched scores PF 1.59 |
+| `backtest_robustness.py` | Out-of-sample split, bootstrap, profit concentration, per-year | No-stop 5× clears all four; the stop model fails three |
+| `backtest_sensitivity.py` | Perturb each parameter one step either way | **18/18** neighbouring values profitable — a plateau, not a fitted spike |
+| `backtest_symbols.py` | Does the edge exist on ETH/SOL/BNB/XRP? | No. Alts are too correlated; the portfolio takes the same bet 4–5× and drawdown triples |
 
 Every backtest shares one framework — 10% risk, stop-distance sizing, flat circuit breaker,
 DCA, and the `CorpusManager` ratchet — so any new idea is *directly* comparable to the live
@@ -411,7 +432,7 @@ no write action anywhere in the UI. GitHub-dark theme, custom favicon.
 - **12 quality metrics** — profit factor, Sharpe, Sortino, max drawdown, Calmar, avg win/loss, R:R, expectancy, avg hold, best/worst streaks
 - Equity curve · drawdown · P&L distribution
 - Monthly P&L bars · long-vs-short split
-- Rolling 10-trade win rate with the 36.7% benchmark line
+- Rolling 10-trade win rate with the 54.0% benchmark line
 - Cumulative P&L
 - Open-position card — side, entry, stop (with % distance), qty, margin, age
 - Full trade table with derived **`Invested $`** and **`SL %`** columns
@@ -607,9 +628,8 @@ quantbot/
 ├── dashboard.py                # Plotly Dash UI — Overview + RSI Radar tabs
 ├── notifier.py                 # Telegram — alerts, heartbeat, RSI radar, commands
 │
-├── backtest_leverage.py        # Committed: leverage/stop-width sweep (20× → 5×), 6.5 yr
-├── backtest_ratchet.py         # Committed: ratchet-frequency sweep at the 5× tier
-│                               # (other backtest_*.py are local research, gitignored)
+├── ohlcv_cache.py              # CSV candle/funding cache — 7 yr of 15m data in 0.4s
+│                               # (backtest/ is local research, gitignored)
 │
 ├── requirements.txt            # Exact-pinned deps — deliberate "==", never ">="
 ├── Dockerfile                  # Multi-stage: base → bot / notifier / dashboard
@@ -961,7 +981,7 @@ Configured per service in `docker-compose.yml` so logs can never fill the 50 GB 
 **Do not skip step 4.** It is the single least-obvious step in the entire project.
 
 **1. Confirm the edge survived contact with the exchange.**
-20+ paper trades with win rate and profit factor within **±20%** of **36.7% / 1.60**.
+20+ paper trades with win rate and profit factor within **±20%** of **54.0% / 1.63**.
 The bot prints this comparison automatically every 5 trades once 20 trades exist:
 
 ```bash
@@ -1071,8 +1091,10 @@ engineering. Ranked by what would actually hurt.
 
 | # | Issue | Impact |
 | --- | --- | --- |
-| 1 | **The backtest has no bankruptcy check.** Simulated `balance` can go negative and keep trading, because sizing is 10% of *corpus* and corpus only ratchets down after 10 consecutive losses. This is why the 5× run reports a 184.2% max drawdown | The headline terminal equity and CAGR assume infinite margin. Add a ruin check (`if balance <= 0: break`) and re-run both sweeps before sizing up beyond the initial $100 |
-| 2 | **Wick stop-outs can desync live state.** The bot's own stop check runs on the *candle close*, but the exchange `STOP_MARKET` order fires *intrabar*. A wick through the stop that recovers by the close closes the real position on Binance while `bot_state.json` still shows it open — and reconciliation currently runs only at startup | The highest-value fix: a per-candle `get_exchange_position()` reconciliation |
+| 1 | ~~**The backtest has no bankruptcy check.**~~ **Fixed 2026-08-24.** A ruin check plus a margin-affordability cap now stop the sim funding trades the account cannot pay for. No tier goes bankrupt any more | Resolved. The pre-fix headline figures assumed infinite margin and have been replaced throughout this README |
+| 2 | ~~**Wick stop-outs can desync live state.**~~ **Fixed 2026-08-24** for `EXIT_MODEL=nostop`: `exchange_position_gone()` reconciles against the exchange every candle, and liquidation is checked *intrabar* against the candle high/low rather than the close | Resolved for the selected model. Still open for `EXIT_MODEL=stop`, which is no longer the recommended config |
+| 2b | **`EXIT_MODEL=stop` diverges from its own backtest.** The bot prices a stop exit *at the stop*; the backtest prices it at the candle close, which is past it. So paper results systematically beat that model's benchmark | Only affects the deprecated model. `nostop` is engine-exact — verified over 126 trades |
+| 2c | **`nostop` depends on auto-add-margin being OFF.** Isolated margin is the *only* thing capping a losing trade. With auto-add-margin enabled Binance tops the position up from the wallet and the cap silently stops being a cap | The bot logs a warning at startup but cannot enforce it. Verify on Binance before real capital |
 | 3 | **The CI safety gate can fail open.** The open-position probe runs as a bare `docker exec` with errors swallowed to `\|\| echo "none"`. If the `ubuntu` user ever lost docker-group membership, the probe would error and report "no position" | A safety gate must fail *closed*: use `sudo docker`, and treat any non-zero exit as "open" |
 | 4 | **State writes are not atomic.** `save_state` writes directly over `bot_state.json`; RSI history does a full read-modify-write | A crash mid-write corrupts the file with no backup. Write to `.tmp` + `os.replace` — a five-line fix |
 | 5 | **Stop-order placement failure has no Telegram alert.** Three retries, then a CRITICAL log line and reliance on the software stop | Reaches `bot.log` only. If the process then dies, the position is naked |
@@ -1141,7 +1163,7 @@ engineering. Ranked by what would actually hurt.
 
 In priority order:
 
-- [ ] **Accumulate 20+ paper trades** → compare WR/PF to 36.7% / 1.60 (±20%) → go live at $100
+- [ ] **Accumulate 20+ paper trades** → compare WR/PF to 54.0% / 1.63 (±20%) → go live at $100
 - [ ] **Add a ruin check to both backtests** and re-run the 6.5-year sweeps — the current terminal-equity figures assume infinite margin
 - [ ] **Fix the three pre-live code items** — CI fail-open gate, per-candle exchange reconciliation, atomic state writes
 - [ ] **Investigate the C3 signal** — RSI divergence + CHoCH + FVG, backtested elsewhere at +64.8%/yr with comparable drawdown
