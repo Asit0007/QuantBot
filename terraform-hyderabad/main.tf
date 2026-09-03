@@ -86,16 +86,12 @@ resource "oci_core_security_list" "quantbot_sl" {
     }
   }
 
-  # HTTP (Let's Encrypt challenge + redirect to HTTPS)
-  ingress_security_rules {
-    protocol  = "6"
-    source    = "0.0.0.0/0"
-    stateless = false
-    tcp_options {
-      min = 80
-      max = 80
-    }
-  }
+  # NOTE: no port-80 ingress. nginx.conf only has `listen 8888;` (the
+  # `listen 80;` / ACME redirect block is commented out) and public HTTPS
+  # is served entirely via the Cloudflare Tunnel, which needs no inbound
+  # port. Singapore carried a dead 0.0.0.0/0 rule on :80 (CLAUDE.md 7.2 #8);
+  # it is deliberately not reproduced here. Restore this block only if an
+  # ACME http-01 challenge or an :80->:443 redirect is ever added.
 
   # Dashboard — port 8888 (IP-only, no SSL required)
   # Lock this down to your IP only for security

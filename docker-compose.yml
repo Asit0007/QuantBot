@@ -62,8 +62,8 @@ services:
     container_name: quantbot_nginx
     restart: unless-stopped
     ports:
-      - "80:80"
       - "8888:8888"    # dashboard — IP-only mode (no SSL required)
+      # - "80:80"      # nginx has no `listen 80;`; public HTTPS is via the Cloudflare Tunnel
       # - "443:443"    # uncomment after adding SSL certs + domain
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
