@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>An automated BTC/USDT futures trading bot — and the production infrastructure that keeps it alive.</b><br>
-  <i>One quantitatively-validated signal, ~20 backtests over 6.5 years, three containerised services,<br>
+  <i>One quantitatively-validated signal, ~30 backtests over 6.9 years, three containerised services,<br>
   Terraform-provisioned cloud, a CI/CD pipeline that refuses to restart the bot mid-trade,<br>
   and a public HTTPS dashboard behind zero open ports.</i>
 </p>
@@ -45,7 +45,7 @@
 | --- | --- |
 | **Mode** | `PAPER_TRADE=true` — simulated fills, no exchange orders |
 | **Live config** | BTC/USDT perp · 15m candles · **5× isolated** · no stop-loss · 10% corpus margin/trade |
-| **Backtest (6.9 yr)** | PF **1.63** · WR **54.0%** · $100 → **$2,566** · Sep 2019 → Aug 2026 — [ruin-checked engine](#the-decisive-result-5-beats-20) |
+| **Backtest (6.9 yr)** | PF **1.63** · WR **54.0%** · $100 → **$2,569** (**+13.7%/yr**) · Sep 2019 → Aug 2026 — [ruin-checked engine](#the-decisive-result-5-beats-20) |
 | **Dashboard** | [quantbot.asitminz.com](https://quantbot.asitminz.com) — public, read-only, no auth (deliberate) |
 | **Infrastructure** | OCI `VM.Standard.A1.Flex` (1 OCPU / 6 GB ARM) · **$0/month** |
 | **Deploys** | Push to `main` → lint → selective container rebuild → health check |
@@ -80,7 +80,7 @@
 
 ## 🎯 What This Project Demonstrates
 
-The trading logic is roughly 1,050 lines of Python. **The surrounding apparatus is the point.**
+The trading logic is roughly 1,540 lines of Python. **The surrounding apparatus is the point.**
 This is deliberately a DevOps/SRE portfolio piece wearing a quant hat: everything below was
 built, broken, debugged, and shipped solo.
 
@@ -216,7 +216,7 @@ single inbound port** and keeps the VM's public IP out of DNS.
 
 > [!IMPORTANT]
 > **The strategy is LOCKED.** Signal, timeframe, and risk parameters are the validated output
-> of ~20 backtests. They live in `.env`, not in code — but changing any of them invalidates
+> of ~30 backtests. They live in `.env`, not in code — but changing any of them invalidates
 > every number this README cites. Re-run the backtests, or don't touch them.
 
 ### Three gates, one candle
@@ -293,7 +293,7 @@ Any change to this function needs the P&L-at-stop identity re-derived, not merel
 
 ## 📊 Backtest Results
 
-Validated across **~20 backtests** spanning **6.5 years (Sep 2019 → Mar 2026)** — a COVID
+Validated across **~30 backtests** spanning **6.9 years (Sep 2019 → Aug 2026)** — a COVID
 crash, two bull cycles, the FTX bear market, and the ETF cycle.
 
 ### The decisive result: 5× beats 20×
@@ -305,7 +305,7 @@ are scaled by `20/leverage` so risk-to-liquidation stays constant across tiers.
 | --- | --- | --- | --- | --- | --- | --- |
 | 20× | 2.0× / 1.5× | $789 | −5.7%/yr | 0.92 | 12.9% | rejected |
 | 5× | 8.0× / 6.0× | $2,847 | +16.8%/yr | 1.16 | 27.1% | rejected — see below |
-| **5× no-stop** | **none — liquidation only** | **$2,566** | **+16.8%/yr** | **1.63** | **54.0%** | ✅ **selected** |
+| **5× no-stop** | **none — liquidation only** | **$2,569** | **+13.7%/yr** | **1.63** | **54.0%** | ✅ **selected** |
 
 Lower leverage is strictly better across every tier. But the stop-based model was rejected
 outright on 2026-08-24: it fails three of four robustness tests, and its **entire 6.9-year net
@@ -348,7 +348,7 @@ isolated-margin liquidation caps the loss at 10% of corpus by construction.
 | 2022 | Bear | **−44%** | Worst year — FTX collapse |
 | 2023 | Bull | **+325%** | Recovery and accumulation |
 | 2024 | Bull | **+126%** | ETF approval cycle |
-| **Total** | **6.5 yrs** | **+45%/yr** | $100 → $4,699 *(20× run)* |
+| **Total** | **6.5 yrs** | **+45%/yr** | $100 → $4,699 *(20× run, pre-correction engine)* |
 
 ### Locked production configuration
 
@@ -366,7 +366,7 @@ isolated-margin liquidation caps the loss at 10% of corpus by construction.
 | Funding | Real 8h history | ~18-day average holds make funding a first-order cost |
 | Win rate | **54.0%** | Benchmark for the go-live gate |
 | Profit factor | **1.63** | Gross profit ÷ gross loss |
-| Total return | **$100 → $2,566** (+16.8%/yr) | 6.9 yr, `backtest_nostop.py`, BTC 15m 5× |
+| Total return | **$100 → $2,569** (+13.7%/yr) | 6.9 yr, `backtest_nostop.py`, BTC 15m 5× |
 
 `BENCH_WR` and `BENCH_PF` live in **both** `bot.py` and `dashboard.py` and switch with
 `EXIT_MODEL` (nostop → 0.540 / 1.63; stop → 0.271 / 1.16). In paper mode the bot prints a
@@ -374,9 +374,11 @@ live-vs-benchmark comparison every 5 trades once 20 trades exist.
 
 The live code path is **verified against the backtest**: replaying 6.9 years of real candles
 through `bot.py`'s own `process()` reproduces `backtest_nostop.py` exactly — same 126 trades,
-same 53.97% win rate, same PF 1.63, same $2,566.37 final balance, zero divergent trades. That
-matters because the go-live gate is a paper-vs-backtest comparison, which is meaningless unless
-the two engines agree.
+same 53.97% win rate, same PF 1.63, same final balance to the cent, zero divergent trades.
+(The match was measured on the 2026-08-24 candle snapshot, where both engines landed on
+$2,566.37; the cache has since been topped up and both now land on $2,569. What is verified is
+that the two agree, not the particular total.) That matters because the go-live gate is a
+paper-vs-backtest comparison, which is meaningless unless the two engines agree.
 
 ### Methodology
 
@@ -412,7 +414,7 @@ not committed (`.gitignore` excludes `backtest_*.py`; the two winners above are 
 | **ADX(14) regime gate** (breakout only when ADX ≥ 25, mean-rev only when ADX ≤ 20, hysteresis between) + volatility-targeted sizing | Drawdown improved to 42.7%, but trade count collapsed 242 → 59. Not enough samples to trust |
 | **Volatility-scaled sizing in isolation** | Established that the *regime gate*, not the sizing change, carried the risk reduction |
 | **15m/10m/5m mean-rev vs pullback-momentum showdown** | 15m mean-rev won the 18-month window ($100 → $953, PF 1.42, WR 69.8%); **5m went bankrupt** (559% drawdown) |
-| **15m mean-rev over the full 6.5 years** | $100 → $8,205 at PF **1.21** — lower profit factor *and* lower terminal equity than the live config, with the same >100% drawdown artefact (a handful of oversized losses from candles closing far past the stop). Beaten on quality, not just risk |
+| **15m mean-rev over the full 6.9 years** | $100 → $8,205 at PF **1.21** — lower profit factor *and* lower terminal equity than the live config, with the same >100% drawdown artefact (a handful of oversized losses from candles closing far past the stop). Beaten on quality, not just risk |
 | **Progressive position scaling** instead of a flat circuit breaker (5 configs) | Flat 48h pause wins. Loss streaks cluster just before big reversals — scaling down means missing the recovery |
 
 ---
@@ -623,7 +625,7 @@ push must never be able to close a live position.**
 
 ```
 quantbot/
-├── bot.py                      # Trading engine — signal, sizing, orders, state  (~1,050 lines)
+├── bot.py                      # Trading engine — signal, sizing, orders, state  (~1,540 lines)
 ├── corpus_manager.py           # Risk module — DCA, corpus ratchet, monthly refresh
 ├── dashboard.py                # Plotly Dash UI — Overview + RSI Radar tabs
 ├── notifier.py                 # Telegram — alerts, heartbeat, RSI radar, commands
