@@ -92,7 +92,7 @@ built, broken, debugged, and shipped solo.
 | **Cloud deployment** | Oracle Cloud Always-Free ARM. Zero recurring cost, real 24/7 uptime. |
 | **Network security** | Cloudflare Tunnel = **zero inbound ports**. Dashboard bound to `127.0.0.1` inside the host, reached only via nginx. SSH + `:8888` restricted to a single CIDR. |
 | **Observability** | Live Plotly Dash dashboard (20 KPIs, 7 charts), Telegram alerting with a 30-minute heartbeat crash detector, rotating structured logs. |
-| **Quantitative finance** | RSI divergence + MACD cross + volume spike. Stop-distance-aware position sizing that makes leverage provably neutral. ~20 backtests over 6.5 years across bull, bear, and chop. |
+| **Quantitative finance** | RSI divergence + MACD cross + volume spike. Margin-first position sizing where the margin posted *is* the maximum loss, capped by isolated margin. ~30 backtests over 6.9 years across bull, bear, and chop — including the out-of-sample, bootstrap, concentration and parameter-plateau tests that rejected the previous config. |
 | **Secrets management** | `.env` never committed, never in an image layer, never overwritten by CI. GitHub Secrets for deploy credentials. Hardened `.gitignore` / `.dockerignore`. |
 | **Operational discipline** | Exact-pinned dependencies, log rotation caps, a documented runbook, and an honest [limitations](#-known-limitations) list rather than a marketing one. |
 
@@ -219,6 +219,12 @@ single inbound port** and keeps the VM's public IP out of DNS.
 > of ~30 backtests. They live in `.env`, not in code — but changing any of them invalidates
 > every number this README cites. Re-run the backtests, or don't touch them.
 
+The production config is **`EXIT_MODEL=nostop` at 5×**: no stop-loss, margin-sized so that the
+margin posted *is* the maximum loss, with isolated-margin liquidation as the only forced exit.
+The original ATR-stop model (`EXIT_MODEL=stop`) is still in the code for comparison and is
+**deprecated** — it fails three of four robustness tests, and its entire 6.9-year net profit is
+a single trade. Everything below describes `nostop` unless it says otherwise.
+
 ### Three gates, one candle
 
 An entry requires **all three gates to fire on the same closed 15-minute candle**. This
@@ -243,44 +249,73 @@ Gate 3 — Volume Spike                participation confirmation
         ↓ all three aligned ↓
 
 ENTRY   BTC/USDT perp, isolated margin, 5× leverage
-STOP    Long  = entry − (ATR(14) × 8.0)
-        Short = entry + (ATR(14) × 6.0)
-        Fallback ±5% if ATR is NaN
-EXIT    Opposite three-gate signal (priority)  OR  ATR stop hit
+        margin = 10% of corpus  →  notional = margin × 5  →  qty = notional / price
+
+EXIT    Opposite three-gate signal          (checked on the candle close)
+   OR   Liquidation, ~19.6% away            (checked INTRABAR, against high/low)
+
+        There is no stop-loss and no take-profit. LONG_ATR_MULT and
+        SHORT_ATR_MULT are inert in this mode — they only bind under
+        the deprecated EXIT_MODEL=stop.
 ```
+
+Liquidation is the one thing checked against the candle's **high/low** rather than its close.
+Every other exit in this bot triggers on the close, but the exchange does not wait for the
+close — checking the close would hide most liquidations behind wicks.
 
 ### Position sizing — the one formula not to break
 
-`size_position()` in `bot.py` is **stop-distance-aware**, not notional-based:
+`size_position_nostop()` in `bot.py` is **margin-first**. With no stop there is no stop distance
+to size against, so the margin becomes the risk decision directly:
 
 ```python
-dollar_risk   = corpus × RISK_PER_TRADE          # 10% of corpus
-stop_distance = abs(entry_price − stop_price)
-qty           = dollar_risk / (stop_distance × LEVERAGE)
-
-# P&L at stop = stop_distance × qty × LEVERAGE = dollar_risk   — always
+margin   = corpus × RISK_PER_TRADE     # 10% of corpus — IS the maximum loss
+notional = margin × LEVERAGE
+qty      = notional / price
 ```
 
-This guarantees that a stop-out loses **exactly** `RISK_PER_TRADE × corpus`, *independent of
-leverage*. That independence is precisely why the leverage backtest was meaningful: since
-leverage alone is provably irrelevant under this sizing, the 5× tier's win came from **stop
-width**, not from leverage. A floor of 0.01% of price guards against a degenerate near-zero
-stop distance.
+Isolated margin cannot lose more than the margin posted, so the loss ceiling is enforced by the
+exchange rather than by an order that might fail to place. **Leverage appears in neither `qty`
+nor P&L** — real futures P&L is `Δprice × qty`; leverage only decides how much margin the
+exchange locks and where liquidation sits.
+
+`fit_to_margin()` then caps margin at `MAX_MARGIN_FRAC ×` free balance and scales quantity,
+notional and risk by the same ratio; `_size_or_skip()` rounds to the exchange lot step
+(0.001 BTC) and rejects anything under the minimum quantity or the $50 minimum notional.
 
 <details>
-<summary><b>The bug this replaced (worth reading)</b></summary>
+<summary><b>The two bugs this replaced (worth reading)</b></summary>
 
-The original sizing was `qty = (corpus × RISK × LEVERAGE) / price`, and the P&L calculation
-*also* multiplied by leverage — **squaring it**. A 0.47% ATR produced an 18.8% loss instead of
-10%. A 2.5% ATR would have wiped the account in a single trade. Fixed in commit `40595b5`.
-Any change to this function needs the P&L-at-stop identity re-derived, not merely tested.
+**Phantom leverage.** `close_position` computed `raw_pnl = (exit − entry) × qty × LEVERAGE`
+while `size_position` computed `qty = dollar_risk / (stop_distance × LEVERAGE)`. The two errors
+cancel *exactly* for a loss at the stop, so the one invariant anyone ever checked — "a stopped-out
+trade loses 10% of corpus" — held perfectly while everything else was wrong by a factor of 20.
+Stored quantity, stored margin and the dashboard's `Invested $` were all 20× off; live mode would
+have sent Binance an order 20× too small; and fees, being a fraction of notional, were understated
+20× in every backtest in the repo's history. Caught from a dashboard screenshot showing
+`Invested $7.02` and `P&L −$15.15` — losing more than you put in is impossible under isolated
+margin, so one of the two numbers had to be a lie.
+
+**Leverage-squared sizing.** Before that, sizing was `qty = (corpus × RISK × LEVERAGE) / price`
+while P&L *also* multiplied by leverage — squaring it. A 0.47% ATR produced an 18.8% loss instead
+of 10%. Fixed in commit `40595b5`.
+
+Any change to these functions needs the P&L identity re-derived, not merely tested.
 </details>
+
+The sizing change is also why the no-stop model is so much cheaper to run. Under the stop model,
+`margin / corpus = RISK / (stop_pct × LEVERAGE)`, which reaches ~1.0× corpus for a 2% stop at 5×
+— **every trade posted the whole account**. The no-stop model posts a flat 10% of corpus, an ~8×
+smaller footprint, which is why fees fall from **$581 to $64** across the 6.9-year backtest.
 
 ### Risk controls
 
 | Control | Behaviour | Why |
 | --- | --- | --- |
-| **Risk per trade** | 10% of *corpus* (not balance) as the loss-at-stop | Corpus is the ratcheted, deliberately-lagging sizing base |
+| **Risk per trade** | 10% of *corpus* (not balance) posted as margin — and under isolated margin that margin **is** the maximum loss | Corpus is the ratcheted, deliberately-lagging sizing base. A hard exchange-enforced ceiling, not a target slippage can overshoot |
+| **Liquidation distance** | ~19.6% from entry — `1/LEVERAGE` minus the 0.4% maintenance margin rate | The only forced exit. Checked intrabar, because the exchange does not wait for the close |
+| **Auto-add-margin OFF** | Must be confirmed on Binance before going live | Isolated margin is the *only* thing capping a losing trade. With auto-add-margin on, Binance tops the position up from the wallet and the cap silently stops being a cap |
+| **Margin affordability** | `fit_to_margin()` caps margin at `MAX_MARGIN_FRAC ×` free balance and scales the position down to fit | Nothing used to compare required margin against free balance — that is what let the old backtests trade a negative account |
 | **Circuit breaker** | 5 consecutive losses → **48h flat pause** on new entries | Backtested against 5 alternatives; flat beats progressive scaling because loss streaks cluster *immediately before* big reversals — scaling down means missing the recovery |
 | **Corpus ratchet ↑** | After 10 completed trades with a net gain → `corpus = balance` | Locks in profit before sizing up |
 | **Corpus ratchet ↓** | After 10 consecutive losses → `corpus = balance` | Stops throwing good money after bad |
@@ -288,6 +323,11 @@ Any change to this function needs the P&L-at-stop identity re-derived, not merel
 | **DCA** | $10/month on the 10th, +10%/yr step-up from `START_YEAR` | Compounds a small account with new capital, not just returns |
 | **Manual pause** | Telegram `/pause` blocks new entries; open positions still exit | An operator kill-switch must never trap a live trade |
 | **Paper default** | `PAPER_TRADE=true` unless *both* `.env` and `--live` say otherwise | Fail-safe in the direction of not trading |
+
+> [!NOTE]
+> **Funding is a first-order cost here.** Average hold is ~18 days (max 122), so real 8-hour
+> funding is charged at the 00:00 / 08:00 / 16:00 UTC settlements in paper mode and in the
+> backtest. Under the old stop model holds were measured in minutes and funding was noise.
 
 ---
 
@@ -361,7 +401,7 @@ isolated-margin liquidation caps the loss at 10% of corpus by construction.
 | Margin per trade | 10% of corpus | Isolated margin caps the loss there by construction |
 | Liquidation distance | ~19.6% | `1/leverage` minus the 0.4% maintenance margin rate |
 | Circuit breaker | 5 losses → 48h | Flat pause; beat all 4 progressive-scaling variants |
-| Ratchet | 10 up / 10 down | Baseline; 5/5 scored better on the corrected engine and is untested live |
+| Ratchet | 10 up / 10 down | Settled 2026-08-25. 5/5 beat 10/10 under the *stop* model only; that advantage does not transfer. Swept under `nostop`, all four variants give identical trade sets and a ~10% spread in final equity |
 | Fee model | 0.05% per side (taker) | Binance futures taker rate, charged on entry and exit |
 | Funding | Real 8h history | ~18-day average holds make funding a first-order cost |
 | Win rate | **54.0%** | Benchmark for the go-live gate |
@@ -388,7 +428,7 @@ product). What each one settled:
 | Script | Question it isolates | Result |
 | --- | --- | --- |
 | `backtest_leverage.py` | Same signal at 5 leverage/stop-width tiers, ATR multipliers scaled by `20/lev` | Lower leverage strictly better; every tier ruins without a margin cap |
-| `backtest_ratchet.py` | Corpus ratchet frequency: 10/10, 5/5, 2/2, 2/10 | 5/5 best on the corrected engine; 10/10 still what runs |
+| `backtest_ratchet.py` | Corpus ratchet frequency: 10/10, 5/5, 2/2, 2/10 | 5/5 best under the *stop* model. Re-swept under `nostop` (2026-08-25): identical 126-trade sets, ~10% equity spread — the ratchet only scales size, never which signals fire. **10/10 kept** |
 | `backtest_nostop.py` | Drop the stop, size the margin, let liquidation be the only forced exit | **PF 1.63, 25.5% max DD, fees $64 vs $581** — the selected config |
 | `backtest_timeframe.py` | 15m vs 30m / 1h / 4h | The edge tracks a **~1–5h wall-clock window**, not the 15m bar — 30m time-matched scores PF 1.59 |
 | `backtest_robustness.py` | Out-of-sample split, bootstrap, profit concentration, per-year | No-stop 5× clears all four; the stop model fails three |
@@ -403,8 +443,10 @@ config. Backtests print to stdout, write no files, and are imported by nothing.
 
 ## 🔬 Research Log — What Was Tried and Rejected
 
-Recorded so it is never accidentally re-explored. These scripts are local-only research and are
-not committed (`.gitignore` excludes `backtest_*.py`; the two winners above are force-added).
+Recorded so it is never accidentally re-explored. These scripts are local-only research and
+**none of them are committed** — `.gitignore` excludes both `backtest_*.py` and the `backtest/`
+folder they live in. The folder carries its own `README.md` indexing all ~30 chronologically and
+marking which findings survived the 2026-08-24 engine correction.
 
 | Idea | Why it was rejected |
 | --- | --- |
@@ -980,7 +1022,27 @@ Configured per service in `docker-compose.yml` so logs can never fill the 50 GB 
 
 ## 🚦 Going Live
 
-**Do not skip step 4.** It is the single least-obvious step in the entire project.
+**Do not skip steps 0, 4 and 5.** Step 4 is the least-obvious in the entire project; step 5
+is the one that decides whether your loss ceiling is real.
+
+**0. ⚠️ Put the server on the validated config first.**
+CI deliberately never overwrites the server's `.env`, so the strategy change in git has *not*
+reached the VM. Derived from the live trade log, the deployed `.env` still solves to
+`LEVERAGE=20` with ATR mults 2.0/1.5 and has no `EXIT_MODEL` key — meaning production is running
+the **rejected** stop model on pre-August-2026 parameters. SSH in and fix it before anything else:
+
+```bash
+# on the VM, in ~/quantbot/.env
+EXIT_MODEL=nostop
+LEVERAGE=5
+LONG_ATR_MULT=8.0      # inert under nostop, but keep them consistent
+SHORT_ATR_MULT=6.0
+
+sudo docker exec quantbot_bot python bot.py --reset
+```
+
+The `--reset` is required, not optional: the existing `trade_log.csv` was produced by the old
+20× config and would poison the paper-vs-benchmark comparison in step 1.
 
 **1. Confirm the edge survived contact with the exchange.**
 20+ paper trades with win rate and profit factor within **±20%** of **54.0% / 1.63**.
@@ -1014,9 +1076,15 @@ currently configured, whatever `.env` says.** Add the command override to the `b
     command: ["python", "bot.py", "--live"]   # ← required to actually go live
 ```
 
-**5. Restart the bot while flat, then verify on Binance directly.**
-Leverage is 5×, margin is isolated, and a `STOP_MARKET` reduce-only order appears within
-seconds of the first entry.
+**5. ⚠️ Confirm auto-add-margin is OFF on Binance.**
+This is the single most important live check. Under `nostop`, isolated margin is the *only*
+thing capping a losing trade. With auto-add-margin enabled, Binance tops the position up from
+your wallet and the loss cap silently stops being a cap. The bot logs a warning at startup but
+**cannot enforce it**.
+
+**6. Restart the bot while flat, then verify on Binance directly.**
+Leverage is 5×, margin is isolated. **No `STOP_MARKET` order will appear — that is correct.**
+Under `nostop` the protection is the liquidation price ~19.6% away, not a stop order.
 
 ```bash
 sudo docker compose up -d --no-deps --build bot
@@ -1029,7 +1097,9 @@ sudo docker compose up -d --no-deps --build bot
 | **Double-key live mode** | `--live` requires `PAPER_TRADE=false` **and** a present `BINANCE_API_KEY`. Either mismatch exits non-zero |
 | **Fail-safe direction** | `PAPER_TRADE=false` *without* `--live` still runs in paper mode |
 | **Startup reconciliation** | On live start, `bot.py` compares state against the real exchange position and **warns** rather than silently trading; a stale state-side position is cleared |
-| **Protective stop** | Live entries place a `STOP_MARKET` reduce-only order with 3 retries. All 3 failing logs CRITICAL and falls back to the per-candle software stop |
+| **Isolated-margin loss ceiling** | Under `nostop` **no stop order is placed, deliberately**. The exchange can take the margin posted and nothing more — a ceiling that holds even if the bot never runs again, unlike a failed `STOP_MARKET` plus a dead process. Requires auto-add-margin OFF |
+| **Per-candle reconciliation** | Under `nostop`, `exchange_position_gone()` checks the exchange every candle. Liquidation happens entirely exchange-side and nothing tells the bot; any API error returns `False`, so a transient failure never reads as "position vanished" |
+| **Protective stop** *(deprecated `stop` model only)* | Live entries place a `STOP_MARKET` reduce-only order with 3 retries. All 3 failing logs CRITICAL and falls back to the per-candle software stop |
 | **Circuit breaker** | 5 consecutive losses → 48h pause on new entries |
 | **Remote kill-switch** | Telegram `/pause` blocks new entries; open positions still exit normally |
 | **CI open-position gate** | A deploy will not restart the bot container while a position is open |
@@ -1106,21 +1176,21 @@ engineering. Ranked by what would actually hurt.
 
 ### Accounting quirks (known, documented, intentionally not "fixed")
 
-- **The entry fee is charged twice to `balance`** — `open_*` does `balance -= fee_in`, then
-  `close_position` computes `pnl = raw_pnl − fee_in − fee_out`. **The backtest does exactly the
-  same thing**, so live and backtest agree with each other, but both understate returns by one
-  entry fee per trade (~0.05% of notional) and `balance ≠ start + total_pnl + dca` will never
-  reconcile. Fixing it without re-running the backtests would break comparability.
+- ~~**The entry fee is charged twice to `balance`.**~~ **Fixed 2026-08-24.** `close_position`
+  now adds `raw_pnl − fee_out` to the balance, since `fee_in` already left it at entry.
+  `balance == start_balance + total_pnl + dca` reconciles again. (`total_fees` is still counted
+  differently in the bot than in the backtest — that affects the reported fee total only, not
+  P&L.)
 - **Paper stop exits are optimistic vs the backtest** — `close_position` prices a stop exit *at
   the stop*, while the backtest prices it at the candle close (by definition past the stop).
   Paper results therefore look slightly better than the backtest would have on the same candles.
   Relevant, because the go-live decision is a ±20% comparison against exactly those benchmarks.
 - **Paper entries fill at the live ticker, exits at the candle close** — asymmetric, and neither
   matches the backtest's "fill at close".
-- **The corpus ratchet can silently skip a trade** — a loss that closes while an older circuit-
-  breaker pause is still running is never seen by `CorpusManager`, desyncing its counters from
-  `bot_state.json`. The backtest calls it unconditionally, so this is a genuine live-vs-backtest
-  divergence in ratchet timing.
+- ~~**The corpus ratchet can silently skip a trade.**~~ **Fixed 2026-08-24.** The guard
+  `if pnl > 0 or not (pnl <= 0 and cb_pause_until)` meant a loss closing during an *older* CB
+  pause reached `CorpusManager` zero times. `on_trade_complete` is now called unconditionally,
+  exactly once per trade, matching the backtests. Closing this was worth PF 1.59 → 1.63.
 - **`hold_candles` is wrong across restarts** — the candle counter resets to 0 on process start.
 - **A missed DCA day is never caught up** — if the bot is down for all of the 10th, that month's
   contribution is skipped permanently.
@@ -1165,9 +1235,11 @@ engineering. Ranked by what would actually hurt.
 
 In priority order:
 
+- [ ] **Put the server `.env` on `EXIT_MODEL=nostop` / `LEVERAGE=5` and `--reset`** — until this is done, production is running the rejected config on stale parameters
 - [ ] **Accumulate 20+ paper trades** → compare WR/PF to 54.0% / 1.63 (±20%) → go live at $100
-- [ ] **Add a ruin check to both backtests** and re-run the 6.5-year sweeps — the current terminal-equity figures assume infinite margin
-- [ ] **Fix the three pre-live code items** — CI fail-open gate, per-candle exchange reconciliation, atomic state writes
+- [x] ~~**Add a ruin check to both backtests**~~ — done 2026-08-21 (`b87b825`), plus a margin-affordability cap on 2026-08-24. No tier goes bankrupt any more
+- [x] ~~**Per-candle exchange reconciliation**~~ — done 2026-08-24 for `EXIT_MODEL=nostop`
+- [ ] **Fix the two remaining pre-live code items** — CI fail-open gate, atomic state writes
 - [ ] **Investigate the C3 signal** — RSI divergence + CHoCH + FVG, backtested elsewhere at +64.8%/yr with comparable drawdown
 - [ ] **Terraform remote state** — OCI Object Storage backend with locking
 - [ ] **Non-root containers** + digest-pinned base image
