@@ -49,6 +49,18 @@ terraform/.terraform.lock.hcl
 terraform/*.tfplan
 terraform/crash.log
 
+# Terraform (Hyderabad migration working dir) — same rules as terraform/ above
+terraform-hyderabad/terraform.tfvars
+terraform-hyderabad/*.tfvars
+terraform-hyderabad/*.auto.tfvars
+terraform-hyderabad/.terraform/
+terraform-hyderabad/*.tfstate
+terraform-hyderabad/*.tfstate.*
+terraform-hyderabad/*.tfstate.backup
+terraform-hyderabad/.terraform.lock.hcl
+terraform-hyderabad/*.tfplan
+terraform-hyderabad/crash.log
+
 # nginx auth / TLS material — generated on the server, never in git
 nginx/certs/
 nginx/htpasswd
