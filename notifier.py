@@ -129,6 +129,19 @@ def get_updates(offset: int = 0) -> list:
     return []
 
 
+def _atomic_write_json(path, payload, **dump_kw):
+    """Temp + fsync + os.replace. rsi_history.json is a full read-modify-write
+    of a 2000-entry array every scan; a crash mid-write truncates it and the
+    dashboard then renders an empty RSI tab that looks like data loss."""
+    d = os.path.dirname(path) or "."
+    tmp = os.path.join(d, f".{os.path.basename(path)}.tmp.{os.getpid()}")
+    with open(tmp, "w") as f:
+        json.dump(payload, f, **dump_kw)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 # ══════════════════════════════════════════════════════════════════
 #  MESSAGE TEMPLATES
 # ══════════════════════════════════════════════════════════════════
@@ -201,6 +214,30 @@ def msg_trade_close(trade_row: pd.Series, state: dict, corpus: float) -> str:
         f"📊 Corpus:  <code>${corpus:.2f}</code>\n"
         f"📈 WR:      {wr:.1f}%  ({wins}/{n} trades)"
     )
+
+
+def msg_rsi_digest(items) -> str:
+    """One message for every coin that changed zone in this scan.
+
+    Replaces N separate alerts with one. Keeping the volume low is the point:
+    this bot should be worth reading, and an operator who learns to swipe past
+    it will also swipe past the crash alert.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    over  = [i for i in items if i[4] == "oversold"]
+    under = [i for i in items if i[4] == "overbought"]
+    head  = (f"🔭 <b>RSI RADAR</b>  ({len(items)} alert"
+             f"{'s' if len(items) != 1 else ''})\n──────────────────\n⏰ {ts}\n")
+    body = ""
+    if over:
+        body += "\n🔵 <b>OVERSOLD</b>  (≤ %d)\n" % RSI_OVERSOLD
+        for coin, rsi, tf, price, _ in over:
+            body += f"  <b>{coin}</b>  RSI <code>{rsi:.1f}</code>  {tf}  ${price:,.2f}\n"
+    if under:
+        body += "\n🔴 <b>OVERBOUGHT</b>  (≥ %d)\n" % RSI_OVERBOUGHT
+        for coin, rsi, tf, price, _ in under:
+            body += f"  <b>{coin}</b>  RSI <code>{rsi:.1f}</code>  {tf}  ${price:,.2f}\n"
+    return head + body
 
 
 def msg_rsi_alert(coin: str, rsi: float, tf: str, price: float) -> str:
@@ -421,6 +458,7 @@ class HeartbeatMonitor:
 class RSIScanner:
     def __init__(self):
         self._state = self._load_state()
+        self._pending = []
         # Use spot exchange — we scan monthly/weekly candles for macro RSI context
         self._exchange = ccxt.binance({"enableRateLimit": True})
         try:
@@ -437,8 +475,7 @@ class RSIScanner:
 
     def _save_state(self):
         try:
-            with open(RSI_STATE, "w") as f:
-                json.dump(self._state, f, indent=2)
+            _atomic_write_json(RSI_STATE, self._state, indent=2)
         except Exception:
             pass
 
@@ -454,13 +491,27 @@ class RSIScanner:
             return None
 
     def scan(self):
+        """One scan = AT MOST ONE Telegram message.
+
+        Each coin used to send its own alert, so a broad move that pushed
+        several coins into an extreme at once produced a burst — up to one
+        message per coin per scan, 6 scans a day. The readings are collected
+        here and emitted as a single digest instead. Nothing is lost: the
+        per-coin detail is still in the message, still in rsi_history.json and
+        still on the dashboard's RSI Radar tab.
+        """
         log.info("RSI scan running...")
+        self._pending = []                      # collected by _scan_coin
         for raw_symbol, coin in SCAN_COINS.items():
             try:
                 self._scan_coin(raw_symbol, coin)
                 time.sleep(0.5)
             except Exception as e:
                 log.error(f"RSI scan error {coin}: {e}")
+        if self._pending:
+            send(msg_rsi_digest(self._pending))
+            log.info(f"  RSI digest sent ({len(self._pending)} coin(s) in one message)")
+        self._pending = []
         self._save_state()
         log.info("RSI scan complete")
 
@@ -519,9 +570,10 @@ class RSIScanner:
             log.info(f"  {coin}: already alerted for {zone}, skipping")
             return
 
-        send(msg_rsi_alert(coin, rsi_val, tf, price))
+        # queue, do not send — scan() emits one digest for the whole sweep
+        self._pending.append((coin, rsi_val, tf, price, zone))
         self._state[state_key] = zone
-        log.info(f"  {coin}: RSI alert sent ({zone}  {rsi_val:.1f})")
+        log.info(f"  {coin}: RSI alert queued ({zone}  {rsi_val:.1f})")
 
     def _append_history(self, coin: str, tf: str, rsi: float, price: float, zone: str | None):
         """Append one RSI reading to rsi_history.json — dashboard reads this file."""
@@ -545,8 +597,7 @@ class RSIScanner:
             if len(history) > 2000:
                 history = history[-2000:]
 
-            with open(RSI_HISTORY, "w") as f:
-                json.dump(history, f)
+            _atomic_write_json(RSI_HISTORY, history)
         except Exception as e:
             log.error(f"RSI history write error: {e}")
 

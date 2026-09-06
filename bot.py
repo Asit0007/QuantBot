@@ -260,9 +260,32 @@ def load_state() -> dict:
     return state
 
 
+def _atomic_write_json(path: str, payload, **dump_kw):
+    """Write JSON so a crash can never leave a half-written file.
+
+    `json.dump` straight onto the target truncates it first, so a crash, an
+    OOM kill or a container stop mid-write leaves VALID-LOOKING but truncated
+    JSON — and there is no backup. That matters most for bot_state.json, which
+    carries the open position, the balance and the CB timer: a corrupt file
+    means the bot restarts with no idea it holds a position, and the compose
+    healthcheck would not catch it because it only checks that the file PARSES.
+
+    Write to a temp file in the same directory, fsync it, then os.replace()
+    — which is atomic on POSIX. Readers see either the whole old file or the
+    whole new one, never a fragment. Same pattern as ohlcv_cache._write_cache.
+    PID-unique temp name so concurrent writers cannot clobber each other.
+    """
+    d = os.path.dirname(path) or "."
+    tmp = os.path.join(d, f".{os.path.basename(path)}.tmp.{os.getpid()}")
+    with open(tmp, "w") as f:
+        json.dump(payload, f, **dump_kw)
+        f.flush()
+        os.fsync(f.fileno())          # durability: survive a host power loss
+    os.replace(tmp, path)             # atomic swap
+
+
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2, default=str)
+    _atomic_write_json(STATE_FILE, state, indent=2, default=str)
 
 
 # ══════════════════════════════════════════════════════════════════════

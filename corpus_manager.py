@@ -162,8 +162,16 @@ class CorpusManager:
             'total_dca_added':    self.total_dca_added,
             'saved_at':           datetime.now().isoformat(),
         }
-        with open(filepath, 'w') as f:
+        # Atomic: truncate-then-write would leave corpus_state.json corrupt if
+        # the process died mid-write, and this file carries the position-sizing
+        # base and the DCA ledger. Temp + fsync + os.replace (POSIX-atomic).
+        _d = os.path.dirname(filepath) or "."
+        _tmp = os.path.join(_d, f".{os.path.basename(filepath)}.tmp.{os.getpid()}")
+        with open(_tmp, 'w') as f:
             json.dump(state, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(_tmp, filepath)
         print(f"✅ Corpus state saved → {filepath}")
         print(f"   Corpus: ${self.corpus:.2f} | DCA total: ${self.total_dca_added:.2f}")
 
