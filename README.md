@@ -41,14 +41,34 @@
 > The go-live gate is 20+ paper trades landing within ±20% of the backtested
 > **54.0% win rate / 1.63 profit factor** — see [Going Live](#-going-live).
 
+> [!IMPORTANT]
+> **The paper ledger was reset to $100 on 2026-09-04, and the go-live count restarts from zero.**
+> The previous 7-trade history was produced by the [phantom leverage bug](#-backtest-results) —
+> recomputing `(entry − exit) × qty` from the trade log shows every row inflated ~20×, so the
+> `$1,063` balance this dashboard displayed was the defect, not a result. It could not be
+> honestly restated either (the bug corrupted position size *and* booked P&L in opposite
+> directions), so the ledger was started clean rather than carried forward with an asterisk.
+
 | | |
 | --- | --- |
 | **Mode** | `PAPER_TRADE=true` — simulated fills, no exchange orders |
 | **Live config** | BTC/USDT perp · 15m candles · **5× isolated** · no stop-loss · 10% corpus margin/trade |
-| **Backtest (6.9 yr)** | PF **1.63** · WR **54.0%** · $100 → **$2,569** (**+13.7%/yr**) · Sep 2019 → Aug 2026 — [ruin-checked engine](#the-decisive-result-5-beats-20) |
+| **Backtest (6.9 yr)** | PF **1.63** · WR **54.0%** · $1,314 invested → **$2,569** (**+19.0%/yr IRR**) · beta **+0.18** vs BTC · Sep 2019 → Aug 2026 |
+| **Paper record** | reset 2026-09-04 · counting from 0 trades on `nostop`/5× |
 | **Dashboard** | [quantbot.asitminz.com](https://quantbot.asitminz.com) — public, read-only, no auth (deliberate) |
-| **Infrastructure** | OCI `VM.Standard.A1.Flex` (1 OCPU / 6 GB ARM) · **$0/month** |
+| **Infrastructure** | OCI `VM.Standard.A1.Flex` (1 OCPU / 6 GB ARM) |
+| **Hosting cost** | **not $0 yet** — see below |
 | **Deploys** | Push to `main` → lint → selective container rebuild → health check |
+
+> [!WARNING]
+> **The "$0/month" claim was wrong, and is being fixed.** OCI's Always Free allowance only
+> applies in the tenancy **home region**. This VM was launched in `ap-singapore-1` — every
+> setting was free-tier-eligible, but being outside the home region meant it billed PAYG the
+> whole time. A phased migration to `ap-hyderabad-1` is in progress: the new box is built and
+> validated, and the public dashboard moves to it at cutover. Until then the domain still
+> resolves to the Singapore box. Genuinely free-tier settings are necessary but not sufficient
+> — **region is part of the eligibility check**, which is the kind of thing you only discover
+> on an invoice.
 
 ---
 
@@ -374,6 +394,21 @@ isolated-margin liquidation caps the loss at 10% of corpus by construction.
 >
 > With a ruin check and a margin-affordability cap in place, no tier goes bankrupt any more.
 > The figures above are from the corrected engine and are the ones this repo now stands behind.
+>
+> **Postscript, 2026-09-04 — it wasn't only the backtest.** The same code path wrote the live
+> paper ledger, so the production `trade_log.csv` was corrupted identically: recomputing
+> `(entry − exit) × qty` from the logged rows shows a consistent **20.0–20.3× inflation on all
+> 7 trades** — logged net `+$913.82` against an arithmetic net of `+$45.75`. The `+963%` this
+> project's public dashboard displayed for months was the bug.
+>
+> That history also could not be salvaged by relabelling it. The bug divided position size by
+> leverage *and* multiplied P&L by it, so there are two candidate "true" histories and no
+> principled way to pick: treat the recorded quantity as what would have filled and net is
+> `+$45.75`; use the *intended* sizing formula and the one winning trade required **$217.52 of
+> margin against a $109.07 balance**, so the affordability cap would have shrunk it and every
+> later trade's size would cascade differently. The ledger was reset to `$100` instead.
+> **Lesson: when a bug is found in a simulation, check whether the same code also wrote the
+> production ledger** — and confirm bad data is actually recoverable before promising to keep it.
 
 ### Per-year regime breakdown
 
@@ -406,7 +441,66 @@ isolated-margin liquidation caps the loss at 10% of corpus by construction.
 | Funding | Real 8h history | ~18-day average holds make funding a first-order cost |
 | Win rate | **54.0%** | Benchmark for the go-live gate |
 | Profit factor | **1.63** | Gross profit ÷ gross loss |
-| Total return | **$100 → $2,569** (+13.7%/yr) | 6.9 yr, `backtest_nostop.py`, BTC 15m 5× |
+| Total return | **$100 → $2,569** | 6.9 yr, `backtest_nostop.py`, BTC 15m 5× |
+| Annual return | **+19.0%/yr IRR** · +13.7%/yr simple · +10.1%/yr CAGR | Three definitions exist — do not mix them |
+
+> ### ⚠️ Which "annual return"?
+>
+> Three different numbers can be computed from the same result, and this repo has at
+> various times printed more than one of them under the same label. They are not
+> interchangeable:
+>
+> | Metric | Definition | 5× no-stop | DCA into BTC spot |
+> | --- | --- | --- | --- |
+> | **IRR (money-weighted)** | the rate that reconciles each contribution *with the date it arrived* — the only one comparable to a benchmark | **+19.0%/yr** | +31.7%/yr |
+> | Simple | `(final − invested) / invested / years` — no compounding | +13.7%/yr | +29.8%/yr |
+> | CAGR (contribution-blind) | `(final / invested)^(1/years) − 1` — pretends every DCA dollar was there on day one | +10.1%/yr | +17.5%/yr |
+>
+> The benchmark column is the same $1,314.48 of contributions on the same dates, put into
+> BTC spot instead. It ends at **$4,048.82** against the strategy's **$2,569.42**. That is
+> the correct comparison to make, and it was missing from this repo entirely until
+> 2026-09-05. It is not damning on its own — the strategy runs at **+0.18 beta** to BTC and
+> **−5.4% net directional exposure**, so it is not trying to beat a long-only benchmark on
+> absolute return; it earns its keep on drawdown (25.5% vs 73.6%) and on being roughly
+> uncorrelated. But the number belongs in the open.
+>
+> `$100 → $2,569` is a **+60% CAGR on the seed alone**, but the seed is not what was
+> invested: $10/month of DCA brings total contributions to **$1,314.48**. Quoting the
+> seed-only figure would be the same class of error as the phantom-leverage bug — a real
+> number computed against the wrong denominator.
+>
+> **The headline figure in this README is the IRR, labelled as such.**
+> `backtest_leverage.py` now prints all three side by side so they can never drift apart
+> again.
+
+> [!IMPORTANT]
+> ### On the 5× choice — it is defensible, not optimal
+>
+> A full sweep (1/2/3/4/5/6/7/8/10/12/15/20×) on 2026-09-06 found **5×'s immediate neighbours
+> both fail** the bootstrap gate: 4× p5 **0.98**, 5× p5 **1.04**, 6× p5 **0.94**. That is a
+> spike, not a plateau — the opposite of the 18/18 plateau `backtest_sensitivity.py` found on
+> the *signal* parameters. Signal-parameter sensitivity says nothing about leverage sensitivity.
+>
+> Read the magnitudes before over-reacting: the **whole curve sits at p5 0.91–1.08**. Nothing on
+> it is decisively above 1. So 5× is the least-bad point on a marginal curve that lands on the
+> right side of an arbitrary threshold — **not a discovered optimum.**
+>
+> **1× reveals what leverage actually does.** With liquidation 99.6% away there are *zero*
+> liquidations, and PF is **1.96** — the signal's clean quality. Watch it decay:
+> `1× PF 1.96 (0% liq) → 5× 1.60 (10%) → 10× 1.42 (31%) → 20× 1.44 (53%)`.
+> Under nostop the margin — and therefore the **maximum loss** — is a flat 10% of corpus at
+> *every* tier. Leverage changes only the size of the winners and the **probability of taking
+> that maximum loss**. It converts partial losses into total ones. **Leverage does not add edge;
+> it trades edge for size.**
+>
+> **12× makes more money ($4,893 vs $2,531) and you should still not use it.** Resampling the
+> trade sequence 20,000×: 12× carries an **86% chance of a >50% drawdown** and **22% chance of
+> >75%**, with p5 final 0.76×. 5× is the only tier whose worst 5% of paths still break even
+> (p5 **1.05×**). And 20× is not high-risk, it is ruin — median outcome **0.00×**, 94.8% of
+> paths lose money. Note also that realised backtest drawdowns were a **lucky draw at every
+> tier** (5×: 25.5% realised vs **34.0% median** resampled).
+>
+> Scale with **capital, not leverage** — leverage multiplies your uncertainty about the edge.
 
 `BENCH_WR` and `BENCH_PF` live in **both** `bot.py` and `dashboard.py` and switch with
 `EXIT_MODEL` (nostop → 0.540 / 1.63; stop → 0.271 / 1.16). In paper mode the bot prints a
@@ -1022,6 +1116,38 @@ Configured per service in `docker-compose.yml` so logs can never fill the 50 GB 
 
 ## 🚦 Going Live
 
+> [!CAUTION]
+> ### ⛔ $100 is below Binance's minimum order size. The bot will place ZERO trades.
+>
+> Verified against the live API on 2026-09-06. `BTC/USDT:USDT` has
+> `LOT_SIZE stepSize = 0.001 BTC` and `MIN_NOTIONAL = 50`. The binding constraint is the
+> **lot step**, not the notional floor: at BTC ~$79,800, 0.001 BTC is **$79.85**, and you
+> cannot order less than one step.
+>
+> Under nostop sizing (`margin = 10% of corpus`, `notional = margin × leverage`) at 5×:
+>
+> | Corpus | Margin | Notional | Qty needed | Rounded | Result |
+> |---|---|---|---|---|---|
+> | **$100** | $10 | $50 | 0.000627 | **0.000** | ❌ **REJECTED** |
+> | $150 | $15 | $75 | 0.000940 | 0.000 | ❌ REJECTED |
+> | $200 | $20 | $100 | 0.001253 | 0.001 | ✅ OK |
+>
+> **Minimum viable corpus at 5×: ~$160.** But median resampled drawdown is **34%**, so a $200
+> account sits below the threshold at the *median* outcome — and once under it the bot silently
+> stops trading and cannot place the trades that would earn the drawdown back. That is soft
+> ruin: the account is not zero, it is frozen.
+>
+> **Fund with $250–300 minimum. ~$360 to survive the p95 drawdown (55.7%).**
+>
+> **Why the backtest never caught this:** it reports `too_small = 0` because it starts at $100
+> in 2019 when BTC was ~$8,285 — 0.001 BTC cost $8, so only the $50 notional floor bound and
+> $100 was exactly enough. The lot step became binding only as BTC rose ~8×, by which point the
+> simulated account had compounded well past it. Your live starting conditions are not the
+> backtest's starting conditions, and no amount of re-running surfaces that.
+>
+> Higher leverage *lowers* the minimum (12× needs ~$67). **Do not** let that argue for more
+> leverage — see the leverage curve note below.
+
 **Do not skip steps 0, 4 and 5.** Step 4 is the least-obvious in the entire project; step 5
 is the one that decides whether your loss ceiling is real.
 
@@ -1168,6 +1294,7 @@ engineering. Ranked by what would actually hurt.
 | 2b | **`EXIT_MODEL=stop` diverges from its own backtest.** The bot prices a stop exit *at the stop*; the backtest prices it at the candle close, which is past it. So paper results systematically beat that model's benchmark | Only affects the deprecated model. `nostop` is engine-exact — verified over 126 trades |
 | 2c | **`nostop` depends on auto-add-margin being OFF.** Isolated margin is the *only* thing capping a losing trade. With auto-add-margin enabled Binance tops the position up from the wallet and the cap silently stops being a cap | The bot logs a warning at startup but cannot enforce it. Verify on Binance before real capital |
 | 3 | **The CI safety gate can fail open.** The open-position probe runs as a bare `docker exec` with errors swallowed to `\|\| echo "none"`. If the `ubuntu` user ever lost docker-group membership, the probe would error and report "no position" | A safety gate must fail *closed*: use `sudo docker`, and treat any non-zero exit as "open" |
+| 3b | **A dashboard-only deploy silently 502s the public site.** `nginx.conf` uses `proxy_pass http://dashboard:8050;` — a static hostname with no `resolver`, so nginx resolves the container IP **once at startup** and caches it. CI rebuilds the dashboard alone on a `dashboard.py` push, giving it a new IP, while the `--force-recreate nginx` step only runs in the infra branch | nginx proxies to a dead address. The health check covers `bot notifier dashboard` and never curls the site, so **CI reports green over a broken dashboard.** Fix at the source: `resolver 127.0.0.11 valid=10s;` + a variable `proxy_pass`, so nginx re-resolves at runtime |
 | 4 | **State writes are not atomic.** `save_state` writes directly over `bot_state.json`; RSI history does a full read-modify-write | A crash mid-write corrupts the file with no backup. Write to `.tmp` + `os.replace` — a five-line fix |
 | 5 | **Stop-order placement failure has no Telegram alert.** Three retries, then a CRITICAL log line and reliance on the software stop | Reaches `bot.log` only. If the process then dies, the position is naked |
 | 6 | **`.env` is passed to every container.** `notifier` and `dashboard` get the same `env_file` as `bot`, so exchange keys sit in the environment of two processes that never trade — one of which serves internet traffic | Split into `.env.bot` / `.env.shared` |
