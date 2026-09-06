@@ -653,8 +653,11 @@ def refresh(_):
                     html.Span(f"{'🟢' if side=='LONG' else '🔴'} {side}",
                               style={"fontWeight":"700","fontSize":"15px","color":clr_s}),
                     html.Span(f"  entry ${entry:,.2f}",    style={"color":TXT}),
-                    html.Span(f"  |  stop ${stop:,.2f} ({dist:.2f}% away)",
-                              style={"color":YLW}),
+                    # Same field, different meaning under nostop: bot.py puts
+                    # the liquidation price in stop_price. The trade table
+                    # below already switches this label; this card did not.
+                    html.Span(f"  |  {'liq' if NOSTOP else 'stop'} ${stop:,.2f} "
+                              f"({dist:.2f}% away)", style={"color":YLW}),
                     html.Span(f"  |  qty {qty:.6f} BTC",   style={"color":MUTED}),
                     html.Span(f"  |  margin ${mgn:.2f}",   style={"color":MUTED}),
                     html.Span(f"  |  since {et}",          style={"color":MUTED}),

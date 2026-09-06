@@ -142,15 +142,29 @@ def msg_trade_open(pos: dict, corpus: float) -> str:
     dist  = abs(ep - stop) / ep * 100 if ep else 0
     icon  = "🟢" if side == "LONG" else "🔴"
     ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # Under EXIT_MODEL=nostop there is NO stop-loss order. bot.py stores the
+    # isolated-margin LIQUIDATION price in `stop_price` (same field, different
+    # meaning), so labelling it "Stop" told the operator a protective order
+    # existed when none had been placed. bot.py's --status and the dashboard
+    # trade table both switch this label already; this alert and the dashboard
+    # position card were missed in the nostop migration.
+    nostop    = pos.get("exit_model") == "nostop"
+    lvl_icon  = "💥" if nostop else "🛑"
+    lvl_label = "Liq" if nostop else "Stop"
+    tail      = ("\n<i>no stop-loss — isolated margin caps the loss at the "
+                 "margin posted</i>") if nostop else ""
     return (
         f"{icon} <b>{side} OPENED</b>\n"
         f"──────────────────\n"
         f"⏰ {ts}\n"
         f"💰 Entry:    <code>${ep:,.2f}</code>\n"
-        f"🛑 Stop:     <code>${stop:,.2f}</code>  ({dist:.2f}% away)\n"
+        f"{lvl_icon} {lvl_label}:{'      ' if nostop else '     '}"
+        f"<code>${stop:,.2f}</code>  ({dist:.2f}% away)\n"
         f"📦 Qty:      <code>{qty:.6f} BTC</code>\n"
         f"💼 Margin:   <code>${mgn:.2f}</code>\n"
         f"📊 Corpus:   <code>${corpus:.2f}</code>"
+        f"{tail}"
     )
 
 
