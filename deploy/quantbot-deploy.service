@@ -1,0 +1,13 @@
+[Unit]
+Description=QuantBot pull-based deploy (checks origin/main, rebuilds changed services)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/quantbot
+ExecStart=/home/ubuntu/quantbot/deploy/quantbot-pull-deploy.sh
+# The script is idempotent and exits 0 when there is nothing to do, so a
+# non-zero exit is a real failure worth seeing in `systemctl status`.
+TimeoutStartSec=900

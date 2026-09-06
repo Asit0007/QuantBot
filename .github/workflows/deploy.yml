@@ -1,4 +1,4 @@
-name: QuantBot CI/CD
+name: QuantBot CI  (lint only — deploys are pull-based, see deploy/)
 
 on:
   push:
@@ -35,159 +35,33 @@ jobs:
           python -m py_compile notifier.py
           echo "All files compile OK"
 
-  # ── 2. Deploy — only runs if lint passes ────────────────────────────
-  deploy:
-    name: Deploy to Oracle Cloud
-    runs-on: ubuntu-latest
-    needs: lint # will not run if lint fails
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      # Detect which services changed — only restart those containers
-      - name: Detect changed services
-        id: changes
-        run: |
-          CHANGED=$(git diff --name-only HEAD~1 HEAD)
-          echo "Changed files: $CHANGED"
-
-          BOT=false; NOTIFIER=false; DASHBOARD=false; INFRA=false
-
-          echo "$CHANGED" | grep -qE "^bot\.py$|^corpus_manager\.py$" && BOT=true
-          echo "$CHANGED" | grep -q "notifier.py"   && NOTIFIER=true
-          echo "$CHANGED" | grep -qE "^dashboard\.py$|^assets/" && DASHBOARD=true
-          echo "$CHANGED" | grep -qE "^Dockerfile$|^\.dockerignore$|^requirements\.txt$|^docker-compose\.yml$|^nginx/" && INFRA=true
-
-          echo "bot=$BOT"             >> $GITHUB_OUTPUT
-          echo "notifier=$NOTIFIER"   >> $GITHUB_OUTPUT
-          echo "dashboard=$DASHBOARD" >> $GITHUB_OUTPUT
-          echo "infra=$INFRA"         >> $GITHUB_OUTPUT
-          echo "Bot=$BOT  Notifier=$NOTIFIER  Dashboard=$DASHBOARD  Infra=$INFRA"
-
-      # Safety gate — never auto-restart bot.py if there is an open position
-      - name: Check for open position (bot safety gate)
-        id: safety
-        if: steps.changes.outputs.bot == 'true'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.ORACLE_HOST }}
-          username: ${{ secrets.ORACLE_USER }}
-          key: ${{ secrets.ORACLE_SSH_KEY }}
-          script: |
-            POS=$(docker exec quantbot_bot python3 -c "
-            import json, os
-            try:
-                s = json.load(open(os.environ['DATA_DIR']+'/bot_state.json'))
-                print('open' if s.get('position') else 'none')
-            except: print('none')
-            " 2>/dev/null || echo "none")
-            echo "$POS" > /tmp/quantbot_position_status
-            if [ "$POS" = "open" ]; then
-              echo "WARNING: open position detected — bot restart will be skipped."
-            else
-              echo "No open position — bot restart is safe."
-            fi
-
-      # Copy files to server
-      - name: Copy files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.ORACLE_HOST }}
-          username: ${{ secrets.ORACLE_USER }}
-          key: ${{ secrets.ORACLE_SSH_KEY }}
-          source: "bot.py,corpus_manager.py,dashboard.py,notifier.py,requirements.txt,Dockerfile,.dockerignore,docker-compose.yml,nginx/nginx.conf,nginx/error_pages/401.html,nginx/error_pages/50x.html,assets/favicon.ico"
-          target: "~/quantbot"
-          overwrite: true
-
-      # Selective restart — only rebuild changed containers
-      - name: Restart changed services
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.ORACLE_HOST }}
-          username: ${{ secrets.ORACLE_USER }}
-          key: ${{ secrets.ORACLE_SSH_KEY }}
-          script: |
-            set -e
-            cd ~/quantbot
-
-            # Ensure .env exists (never overwritten by CI)
-            if [ ! -f .env ]; then
-              echo "WARNING: .env not found — copy .env.example to .env and fill in values"
-              exit 1
-            fi
-
-            # Full rebuild if Dockerfile / requirements / compose / nginx changed
-            if [ "${{ steps.changes.outputs.infra }}" = "true" ]; then
-              echo "Infrastructure changed — full rebuild..."
-              sudo docker compose build
-              POS=$(cat /tmp/quantbot_position_status 2>/dev/null || echo "none")
-              if [ "${{ steps.changes.outputs.bot }}" = "true" ] && [ "$POS" = "open" ]; then
-                echo "Open position detected — rebuilding everything except bot; bot keeps running on its current image until flat."
-                sudo docker compose up -d --no-deps notifier dashboard nginx
-              else
-                sudo docker compose up -d
-              fi
-              # nginx uses the stock image with nginx.conf/htpasswd/error_pages bind-
-              # mounted from disk — `compose up` only recreates a container when the
-              # *service definition* changes, so an nginx.conf-only edit is otherwise
-              # scp'd to disk but never reread by the running nginx process. Force it.
-              sudo docker compose up -d --force-recreate --no-deps nginx
-              echo "Full rebuild complete"; exit 0
-            fi
-
-            RESTARTED=""
-
-            if [ "${{ steps.changes.outputs.dashboard }}" = "true" ]; then
-              sudo docker compose up -d --no-deps --build dashboard
-              RESTARTED="$RESTARTED dashboard"
-            fi
-
-            if [ "${{ steps.changes.outputs.notifier }}" = "true" ]; then
-              sudo docker compose up -d --no-deps --build notifier
-              RESTARTED="$RESTARTED notifier"
-            fi
-
-            if [ "${{ steps.changes.outputs.bot }}" = "true" ]; then
-              POS=$(cat /tmp/quantbot_position_status 2>/dev/null || echo "none")
-              if [ "$POS" != "open" ]; then
-                sudo docker compose up -d --no-deps --build bot
-                RESTARTED="$RESTARTED bot"
-              else
-                echo "Skipping bot restart — open position detected"
-              fi
-            fi
-
-            # First deploy — start everything if nothing is running
-            RUNNING=$(sudo docker compose ps --services --filter status=running 2>/dev/null | wc -l)
-            if [ "$RUNNING" -eq 0 ]; then
-              echo "No containers running — starting all services..."
-              sudo docker compose up -d --build
-              RESTARTED="all"
-            fi
-
-            [ -z "$RESTARTED" ] && echo "No service restarts needed" || echo "Restarted:$RESTARTED"
-            sudo docker compose ps
-
-      # Verify all containers are still running after deploy
-      - name: Health check
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.ORACLE_HOST }}
-          username: ${{ secrets.ORACLE_USER }}
-          key: ${{ secrets.ORACLE_SSH_KEY }}
-          script: |
-            sleep 8
-            FAILED=0
-            for svc in bot notifier dashboard; do
-              STATUS=$(sudo docker inspect --format='{{.State.Status}}' quantbot_$svc 2>/dev/null || echo "missing")
-              if [ "$STATUS" != "running" ]; then
-                echo "FAILED: $svc is $STATUS"
-                sudo docker compose -f ~/quantbot/docker-compose.yml logs $svc --tail=30
-                FAILED=1
-              else
-                echo "OK: $svc running"
-              fi
-            done
-            exit $FAILED
+  # ── 2. Deploy — REMOVED 2026-09-06, replaced by a pull-based deployer ──
+  #
+  # This job used to scp to the VM and restart containers over ssh. It cannot
+  # work any more and was failing on every push:
+  #
+  #   The OCI security list allows SSH from ONE home IP (my_ip_cidr). GitHub
+  #   Actions runners come from 5,625 published IPv4 ranges; OCI caps a
+  #   security list at 200 ingress rules — 5.6x over the hard limit — and the
+  #   list rotates weekly. Allowing them would also mean trusting ~28M
+  #   addresses, which is not meaningfully safer than 0.0.0.0/0. A
+  #   self-hosted runner is ruled out because this repo is PUBLIC: a fork's
+  #   pull request could execute code on the box holding the Binance keys.
+  #
+  # The VM now PULLS instead. `deploy/quantbot-pull-deploy.sh` runs on a
+  # systemd timer, checks origin/main, and rebuilds only the changed services.
+  # Consequences worth knowing:
+  #
+  #   * No inbound port and no ssh key in GitHub. ORACLE_HOST, ORACLE_USER and
+  #     ORACLE_SSH_KEY are no longer used by CI and can be deleted.
+  #   * The open-position gate now FAILS CLOSED. The old one here ran
+  #     `docker exec ... 2>/dev/null || echo "none"`, so any error was
+  #     swallowed as "no position" and CI would restart the bot mid-trade
+  #     (CLAUDE.md 7.2 #1). The new probe runs locally and treats any failure
+  #     as "position open".
+  #   * Deploys are eventually-consistent (<=5 min) rather than instant, which
+  #     is irrelevant at this project's deploy frequency.
+  #
+  # This workflow is now a LINT GATE only. It still blocks nothing from being
+  # pulled — the VM deploys whatever is on main — so a red build here means
+  # "go fix main", not "the deploy stopped".
