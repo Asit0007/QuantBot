@@ -82,7 +82,7 @@
 - [Live Dashboard](#-live-dashboard)
 - [Telegram Control Plane](#-telegram-control-plane)
 - [Infrastructure](#-infrastructure)
-- [CI/CD Pipeline](#-cicd-pipeline)
+- [Deployment — pull-based](#-deployment--pull-based)
 - [Repository Layout](#-repository-layout)
 - [Getting Started](#-getting-started)
 - [Configuration Reference](#-configuration-reference)
@@ -108,7 +108,7 @@ built, broken, debugged, and shipped solo.
 | --- | --- |
 | **Infrastructure as Code** | Terraform `~> 5.0` OCI provider — VCN, IGW, route table, security list, public subnet, ARM compute, cloud-init bootstrap. Six resources, one `apply`. |
 | **Containerisation** | Multi-stage `Dockerfile` — one `base` layer, three runtime targets (`bot` / `notifier` / `dashboard`). Compose v2 stack of four services on one named volume. |
-| **CI/CD** | GitHub Actions: lint gate → change detection → **open-position safety gate** → explicit-file scp → per-service selective rebuild → container health check. |
+| **CI/CD** | GitHub Actions lint gate (flake8 + `py_compile`), plus a **pull-based deployer** on the VM: systemd timer → `git fetch` → fail-**closed** open-position probe → selective per-service rebuild → health check → Telegram notify. No inbound port, no ssh key in GitHub. |
 | **Cloud deployment** | Oracle Cloud Always-Free ARM. Zero recurring cost, real 24/7 uptime. |
 | **Network security** | Cloudflare Tunnel = **zero inbound ports**. Dashboard bound to `127.0.0.1` inside the host, reached only via nginx. SSH + `:8888` restricted to a single CIDR. |
 | **Observability** | Live Plotly Dash dashboard (20 KPIs, 7 charts), Telegram alerting with a 30-minute heartbeat crash detector, rotating structured logs. |
@@ -679,81 +679,106 @@ recreating the instance when capacity allows — pandas on 200 candles is nowher
 
 ---
 
-## 🚀 CI/CD Pipeline
+## 🚀 Deployment — pull-based
 
-Push to `main` triggers `.github/workflows/deploy.yml`. The design goal is simple: **a code
-push must never be able to close a live position.**
+> [!IMPORTANT]
+> **Changed 2026-09-06.** CI no longer deploys. The VM **pulls**. `.github/workflows/deploy.yml`
+> is now a **lint gate only** — a red build means *"main is broken, go fix it"*, **not**
+> *"deploys stopped"*, because the VM will deploy whatever is on `main` regardless.
+
+### Why push-based CI had to go
+
+The OCI security list allows SSH from **one home IP** (`my_ip_cidr/32`). GitHub Actions runners
+come from arbitrary Azure addresses, so every deploy failed at the first ssh step.
+
+Allowing GitHub's ranges is not possible and would not be wise:
+
+| | |
+|---|---|
+| GitHub Actions IPv4 ranges | **5,625** |
+| OCI ingress rules per security list | **200** (1,000 across the max 5 lists) |
+| Shortfall | **5.6× over the hard limit** |
+| Addresses it would authorise | **~28 million** — most of Azure |
+| Churn | GitHub says re-fetch weekly |
+
+A **self-hosted runner** is also ruled out: this repo is **public**, so a fork's pull request
+could execute code on the machine holding the Binance API keys.
+
+So the box pulls instead. **No inbound port, and no ssh key in GitHub at all.**
+
+### How it works
 
 ```
-   Push to main
+   git push origin main
         │
-        ▼
-┌───────────────────────────────────────────────────────────┐
-│  1. Lint & Syntax Check                                   │
-│     flake8 --select=E9,F63,F7,F82   (real errors only)    │
-│     py_compile × bot / corpus_manager / dashboard / notifier │
-└───────────────────────┬───────────────────────────────────┘
-                        │ deploy does not run if this fails
-                        ▼
-┌───────────────────────────────────────────────────────────┐
-│  2. Detect changed services   (git diff HEAD~1 HEAD)      │
-│     bot.py | corpus_manager.py        → BOT=true          │
-│     notifier.py                       → NOTIFIER=true     │
-│     dashboard.py | assets/            → DASHBOARD=true    │
-│     Dockerfile | .dockerignore |                          │
-│     requirements.txt | docker-compose.yml | nginx/        │
-│                                       → INFRA=true        │
-└───────────────────────┬───────────────────────────────────┘
-                        ▼
-┌───────────────────────────────────────────────────────────┐
-│  3. 🔒 Open-position safety gate   (only if BOT=true)     │
-│     ssh → read bot_state.json → position open?            │
-│         open  → bot container is NOT restarted            │
-│                 (even during a full infra rebuild —       │
-│                  everything else rebuilds around it)      │
-│         none  → restart is safe                           │
-└───────────────────────┬───────────────────────────────────┘
-                        ▼
-┌───────────────────────────────────────────────────────────┐
-│  4. Copy files   (scp — explicit allow-list, never ".")   │
-│     4 Python modules · requirements · Dockerfile ·        │
-│     .dockerignore · docker-compose.yml · nginx.conf ·     │
-│     error pages · favicon                                 │
-│     .env on the server is NEVER overwritten;              │
-│     a missing .env fails the deploy loudly                │
-└───────────────────────┬───────────────────────────────────┘
-                        ▼
-┌───────────────────────────────────────────────────────────┐
-│  5. Selective restart                                     │
-│     INFRA     → compose build && up -d  (full rebuild)    │
-│                 + always --force-recreate nginx  ←── see  │
-│                   note below, this one cost real hours    │
-│     DASHBOARD → up -d --no-deps --build dashboard         │
-│     NOTIFIER  → up -d --no-deps --build notifier          │
-│     BOT       → up -d --no-deps --build bot   (gated)     │
-│     First deploy → nothing running? start everything      │
-└───────────────────────┬───────────────────────────────────┘
-                        ▼
-┌───────────────────────────────────────────────────────────┐
-│  6. Health check                                          │
-│     docker inspect each container → exit 1 if not         │
-│     "running", and dump the last 30 log lines on failure  │
-└───────────────────────────────────────────────────────────┘
+        ▼   GitHub Actions: flake8 + py_compile   (gate only — blocks nothing)
+        │
+        ▼   systemd timer on the VM, every 5 min (45s jitter, Persistent=true)
+┌──────────────────────────────────────────────────────────────┐
+│  deploy/quantbot-pull-deploy.sh                              │
+│    flock              — overlapping runs impossible          │
+│    git fetch          — no new commit? exit 0, write nothing │
+│    .env present?      — abort if missing, never deploy blind │
+│    position probe     — LOCAL, and FAILS CLOSED              │
+│    git reset --hard   — box mirrors the repo exactly;        │
+│                         local edits LOGGED before discard    │
+│    selective rebuild  — bot / notifier / dashboard / infra   │
+│    nginx force-recreate on infra (bind-mounted config)       │
+│    health check       — all four must be `running`           │
+│    Telegram notify    — ✅ Deploy OK  /  🚨 Deploy UNHEALTHY  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-> **Why nginx is always force-recreated:** `nginx.conf`, `htpasswd`, and the error pages are
-> **bind-mounted from disk**, not baked into an image. `docker compose up` only recreates a
-> container when the *service definition* changes — so an `nginx.conf`-only edit was being
-> scp'd to the server and then never read by the running process. Config changes silently did
-> nothing. Fixed in `259157d`.
+### The safety gate now fails CLOSED
 
-**Required GitHub Secrets:**
+This is the part that matters. The old CI gate ran:
 
-| Secret | Value |
-| --- | --- |
-| `ORACLE_HOST` | VM public IP |
-| `ORACLE_USER` | `ubuntu` |
-| `ORACLE_SSH_KEY` | Full contents of the private key (e.g. `~/.ssh/quantbot_rsa`) |
+```bash
+POS=$(docker exec quantbot_bot python3 -c "..." 2>/dev/null || echo "none")
+```
+
+Every failure — lost docker-group membership, container down, malformed JSON, ssh hiccup —
+collapsed to `"none"`, and CI would then **restart the bot mid-trade**. A safety gate that
+fails open is not a safety gate. The replacement assumes the dangerous case and only
+downgrades on a clean read:
+
+```bash
+POS="open"
+if OUT=$(sudo docker exec quantbot_bot python3 -c '...'); then POS="$OUT"
+else log "probe FAILED — assuming OPEN (fail closed)"; fi
+```
+
+While a position is open the **bot** container is skipped and everything else still deploys.
+
+### Operating it
+
+```bash
+systemctl status quantbot-deploy.timer      # is it scheduled?
+systemctl list-timers quantbot-deploy.timer # when does it next fire?
+tail -f ~/quantbot-deploy.log               # what did it do? (silent when idle)
+~/quantbot/deploy/quantbot-pull-deploy.sh   # force a run now
+```
+
+**Secrets:** `ORACLE_HOST`, `ORACLE_USER` and `ORACLE_SSH_KEY` are **no longer used** and should
+be deleted from repo secrets — that removes an ssh private key from a third-party system.
+
+**Trade-off accepted:** deploys are eventually-consistent (≤5 min) rather than instant, which is
+irrelevant at this project's deploy frequency.
+
+### Manual deploy (when you need it now)
+
+Runs from an IP the security list allows:
+
+```bash
+HY=<vm-ip>; K=~/.ssh/quantbot_rsa
+ssh -i $K ubuntu@$HY 'cd ~/quantbot && git fetch && git reset --hard origin/main \
+  && sudo docker compose build && sudo docker compose up -d \
+  && sudo docker compose up -d --force-recreate --no-deps nginx'
+```
+
+The separate `--force-recreate nginx` is **not** redundant: `nginx.conf` is bind-mounted, and
+`compose up` only recreates a container when the *service definition* changes — so a
+config-only edit is copied to disk and then never reread (commit `259157d`).
 
 ---
 
@@ -793,7 +818,7 @@ quantbot/
 │   └── outputs.tf              # vm_public_ip, ssh_command, dashboard_url
 │
 └── .github/workflows/
-    └── deploy.yml              # lint → detect → safety gate → scp → selective restart → health check
+    └── deploy.yml              # LINT GATE ONLY — deploys are pull-based (see deploy/)
 ```
 
 ---
@@ -910,8 +935,10 @@ MACD_SLOW=26              ATR_PERIOD=14           DIV_MEMORY=3
 MACD_SIGNAL_WIN=9         CANDLES_NEEDED=200      WARMUP=50
 ```
 
-> `ORACLE_HOST`, `ORACLE_USER`, and `ORACLE_SSH_KEY` are **CI-only** and live in GitHub Secrets.
-> They must never appear in `.env`.
+> `ORACLE_HOST`, `ORACLE_USER`, and `ORACLE_SSH_KEY` were CI-only GitHub Secrets. **They are
+> unused as of 2026-09-06** — deploys are pull-based and need no inbound ssh. Delete them from
+> repo secrets; that removes an ssh private key from a third-party system. They must never
+> appear in `.env` either way.
 
 New parameters go in `env.example` too — and in `_REQUIRED_ENV_VARS` if the bot cannot run
 without them.
@@ -976,15 +1003,23 @@ chmod 600 ~/quantbot/.env
 > cloud-init writes `user_data` into instance metadata, which is readable from inside the VM
 > and stored in Terraform state — not where exchange keys belong.
 
-### 3 — Deploy via CI/CD
+### 3 — Install the pull-based deployer, then just push
+
+No GitHub secrets required — the VM pulls, nothing pushes to it.
 
 ```bash
-# Add ORACLE_HOST / ORACLE_USER / ORACLE_SSH_KEY to GitHub repo secrets, then:
-git push origin main
+# on the VM, once:
+sudo cp ~/quantbot/deploy/quantbot-deploy.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now quantbot-deploy.timer
 
-# Watch: GitHub → Actions → QuantBot CI/CD
-# All steps green in ~3 minutes.
+# thereafter, from anywhere:
+git push origin main          # picked up within 5 minutes
 ```
+
+Watch it land with `tail -f ~/quantbot-deploy.log` on the box, or wait for the Telegram
+`✅ Deploy OK`. GitHub Actions still runs flake8 + `py_compile` on every push, but it is a
+**gate only** — it does not deploy and cannot stop the VM from pulling.
 
 ### 4 — Verify
 
