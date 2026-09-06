@@ -189,6 +189,15 @@ if NOSTOP:
 else:
     BENCH_WR = 0.271
     BENCH_PF = 1.16
+
+# ── Config identity ───────────────────────────────────────────────────
+# Exit model AND leverage together are the real identity of a configuration.
+# Written to every trade_log.csv row so the benchmark check can filter to the
+# CURRENT config instead of averaging across whatever happens to be in the log.
+# Before this existed the go-live gate was only correct because the log had been
+# RESET to a single config (2026-09-04); the next strategy change would have
+# needed another reset. Now it is a filter, not a reset.
+CONFIG_ID = f"v2-{EXIT_MODEL}-{int(LEVERAGE)}x"
 BENCH_MIN_TRADES = 20
 
 
@@ -262,7 +271,7 @@ def save_state(state: dict):
 
 TRADE_LOG_HEADER = (
     "datetime,side,entry_price,exit_price,stop_price,"
-    "quantity_btc,pnl_usd,fees_usd,balance,reason,hold_candles,mode\n"
+    "quantity_btc,pnl_usd,fees_usd,balance,reason,hold_candles,mode,config_id\n"
 )
 
 
@@ -285,6 +294,7 @@ def append_trade_log(trade: dict):
             trade["reason"],
             trade["hold_candles"],
             trade["mode"],
+            trade.get("config_id", CONFIG_ID),
         ]) + "\n")
 
 
@@ -1282,15 +1292,25 @@ class QuantBot:
         wr   = wins / n if n > 0 else 0
         pf   = None
 
+        skipped = 0
         if Path(TRADE_LOG_FILE).exists():
-            tl  = pd.read_csv(TRADE_LOG_FILE)
-            w   = tl[tl["pnl_usd"] > 0]["pnl_usd"].sum()
-            l   = abs(tl[tl["pnl_usd"] <= 0]["pnl_usd"].sum())
-            pf  = w / l if l > 0 else None
+            tl = pd.read_csv(TRADE_LOG_FILE)
+            # Only compare like with like. Rows written before config_id existed
+            # have no tag; they are NOT assumed to be this config, they are
+            # excluded and counted, because silently folding a different exit
+            # model or leverage into the go-live gate is exactly the error this
+            # column was added to prevent.
+            if "config_id" in tl.columns:
+                total   = len(tl)
+                tl      = tl[tl["config_id"] == CONFIG_ID]
+                skipped = total - len(tl)
+            w  = tl[tl["pnl_usd"] > 0]["pnl_usd"].sum()
+            l  = abs(tl[tl["pnl_usd"] <= 0]["pnl_usd"].sum())
+            pf = w / l if l > 0 else None
 
         dwr = (wr - BENCH_WR) / BENCH_WR * 100
         print(f"\n{'━'*58}")
-        print(f"  📊 PAPER PERFORMANCE  ({n} trades)")
+        print(f"  📊 PAPER PERFORMANCE  ({n} trades)  config={CONFIG_ID}")
         print(f"{'─'*58}")
         print(f"  Win Rate:        {wr*100:.1f}%  (backtest {BENCH_WR*100:.1f}%  Δ{dwr:+.0f}%)")
         if pf:
@@ -1298,6 +1318,8 @@ class QuantBot:
             print(f"  Profit Factor:   {pf:.2f}   (backtest {BENCH_PF:.2f}  Δ{dpf:+.0f}%)")
         print(f"  Net P&L:         ${self.st.get('total_pnl', 0):+,.2f}")
         print(f"  Balance:         ${self.st['balance']:,.2f}")
+        if skipped:
+            print(f"  (PF excludes {skipped} row(s) from another/untagged config)")
         within_20 = abs(wr - BENCH_WR) / BENCH_WR <= 0.20
         if within_20:
             print(f"\n  ✅ Within 20% of backtest benchmarks.")
