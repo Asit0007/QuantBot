@@ -759,8 +759,9 @@ tail -f ~/quantbot-deploy.log               # what did it do? (silent when idle)
 ~/quantbot/deploy/quantbot-pull-deploy.sh   # force a run now
 ```
 
-**Secrets:** `ORACLE_HOST`, `ORACLE_USER` and `ORACLE_SSH_KEY` are **no longer used** and should
-be deleted from repo secrets — that removes an ssh private key from a third-party system.
+**Secrets:** `ORACLE_HOST`, `ORACLE_USER` and `ORACLE_SSH_KEY` are gone — **deleted from repo
+secrets on 2026-09-06**. Nothing pushes to the VM any more, so no ssh private key lives in a
+third-party system. Do not re-add them.
 
 **Trade-off accepted:** deploys are eventually-consistent (≤5 min) rather than instant, which is
 irrelevant at this project's deploy frequency.
@@ -935,10 +936,9 @@ MACD_SLOW=26              ATR_PERIOD=14           DIV_MEMORY=3
 MACD_SIGNAL_WIN=9         CANDLES_NEEDED=200      WARMUP=50
 ```
 
-> `ORACLE_HOST`, `ORACLE_USER`, and `ORACLE_SSH_KEY` were CI-only GitHub Secrets. **They are
-> unused as of 2026-09-06** — deploys are pull-based and need no inbound ssh. Delete them from
-> repo secrets; that removes an ssh private key from a third-party system. They must never
-> appear in `.env` either way.
+> `ORACLE_HOST`, `ORACLE_USER`, and `ORACLE_SSH_KEY` were CI-only GitHub Secrets. **They were
+> deleted on 2026-09-06** — deploys are pull-based and need no inbound ssh. There is now no ssh
+> private key in GitHub at all. They must never appear in `.env` either.
 
 New parameters go in `env.example` too — and in `_REQUIRED_ENV_VARS` if the bot cannot run
 without them.
