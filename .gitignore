@@ -91,6 +91,9 @@ data_cache/
 *_ohlcv.csv
 ohlcv_cache/
 
+# Local planning docs (working context, same class as CLAUDE.md)
+MULTI_MARKET_PLAN.md
+
 # Local agent / editor context
 # Both spellings listed explicitly: macOS is case-insensitive so one entry covers
 # both here, but a Linux checkout (CI) matches case-sensitively.
