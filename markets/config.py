@@ -50,6 +50,24 @@ class MarketConfig:
     maint_margin_rate: float = 0.004
     fee_rate: float = 0.0005
 
+    # ── Stops ────────────────────────────────────────────────────────
+    # ATR multipliers. bot.py hardcodes 8.0/6.0 as LONG_ATR_MULT and
+    # SHORT_ATR_MULT — BTC's validated values, and meaningless anywhere
+    # else. Baking them into the shared engine would be exactly the
+    # "ported the strategy instead of the framework" mistake.
+    long_atr_mult: float = 8.0
+    short_atr_mult: float = 6.0
+
+    # ── Venue capability ─────────────────────────────────────────────
+    # Whether a SHORT can be held. This is not a preference — in the
+    # Indian CASH segment a retail short must be squared off the same
+    # day; holding one overnight requires the F&O segment or stock
+    # lending (SLB). A daily-bar backtest that shorts and holds is
+    # therefore UNTRADEABLE as written, and would look like free alpha
+    # because roughly half the signals are shorts in a mean-reverting
+    # universe. Default True (crypto perps); NSE cash sets it False.
+    allow_short: bool = True
+
     # ── Signal (the LOCKED BTC values are the defaults) ──────────────
     rsi_len: int = 14
     macd_fast: int = 12

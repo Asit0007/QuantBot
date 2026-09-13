@@ -146,7 +146,8 @@ class MarketEngine:
             # trade log keep one consistent "where does this end" field.
             stop = liq_price(side, price, self.cfg)
         else:
-            mult = 8.0 if side == "long" else 6.0
+            mult = (self.cfg.long_atr_mult if side == "long"
+                    else self.cfg.short_atr_mult)
             stop = (price - mult * atr) if side == "long" else (price + mult * atr)
             if atr <= 0:
                 stop = price * (0.95 if side == "long" else 1.05)
@@ -157,7 +158,17 @@ class MarketEngine:
 
         qty = sizing["qty"]
         fee_in = price * qty * self.cfg.fee_rate
-        filled = self.ex.place_entry(symbol, side, qty, stop)["filled_price"] or price
+
+        # A pure DataAdapter has no place_entry, and that is correct: in a
+        # backtest there is no venue to fill against. Falling back to the
+        # candle close keeps research adapters from having to implement a
+        # fake order method just to be usable — which would blur the
+        # deliberate DataAdapter / TradingAdapter split that stops research
+        # code from placing real orders.
+        place = getattr(self.ex, "place_entry", None)
+        filled = price
+        if place is not None:
+            filled = place(symbol, side, qty, stop)["filled_price"] or price
 
         self.st["balance"] -= fee_in
         self.st["total_fees"] += fee_in
@@ -307,7 +318,12 @@ class MarketEngine:
 
         if bull > 0 and bool(candle.get("macd_bull_cross")) and bool(candle.get("high_vol")):
             self.open_position(symbol, "long", candle, candle_n, now)
-        elif bear > 0 and bool(candle.get("macd_bear_cross")) and bool(candle.get("high_vol")):
+        elif (self.cfg.allow_short and bear > 0
+              and bool(candle.get("macd_bear_cross")) and bool(candle.get("high_vol"))):
+            # allow_short=False is a VENUE constraint, not a strategy choice:
+            # an NSE cash short cannot be held overnight. Taking these trades
+            # in a daily backtest would book profits that could never have
+            # been realised.
             self.open_position(symbol, "short", candle, candle_n, now)
 
     def end_of_bar(self) -> None:
