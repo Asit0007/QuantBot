@@ -245,5 +245,43 @@ costs, no gates. Forward windows overlap, so the p-values are floors. And it is
 the first thing in this project to look interesting after a proper screen, which
 is precisely when to be most suspicious.
 
-**Next:** more markets (a real US OHLCV feed, plus Europe/Japan via the same
-French library's international factors) to raise n and re-test the triple.
+**Trial 3 — four regions, 36 years.** The same French library publishes daily
+factors for Europe, Japan, Asia-Pacific ex-Japan and North America (1990-07 →
+2026-07, Bloomberg-based). Four markets over 36.1 years instead of two over
+11.6, with **n=418** against the earlier n=33.
+
+First, the independence check the p³ argument depends on — daily return
+correlation:
+
+| | EUROPE | JAPAN | ASIAPAC | NORTHAM |
+|---|---|---|---|---|
+| **EUROPE** | 1.00 | 0.28 | 0.56 | 0.55 |
+| **JAPAN** | 0.28 | 1.00 | 0.47 | **0.04** |
+| **ASIAPAC** | 0.56 | 0.47 | 1.00 | 0.35 |
+| **NORTHAM** | 0.55 | 0.04 | 0.35 | 1.00 |
+
+Lower than expected — Japan and North America are essentially uncorrelated daily.
+
+**All four regions in agreement (n=418) vs one alone (n=284):**
+
+| horizon | b=4 | b=1 | diff | bootstrap 95% CI | permutation p |
+|---|---|---|---|---|---|
+| 5d | +0.60% | **−0.68%** | +1.28% | [+0.94%, +1.65%] | **0.000** |
+| 10d | +0.76% | **−0.42%** | +1.18% | [+0.66%, +1.68%] | **0.000** |
+| 20d | +1.20% | **−0.13%** | +1.33% | [+0.60%, +2.07%] | **0.000** |
+| 40d | +1.93% | +0.83% | +1.10% | [+0.04%, +2.17%] | 0.041 |
+
+Every horizon significant, three at p < 0.001, all CIs excluding zero.
+
+**The asymmetry is the interesting part.** A MACD cross in ONE market alone
+precedes *negative* forward returns at 5/10/20 days. The same cross in all four
+precedes positive ones. Breadth is not amplifying a signal — it is separating a
+real one from a harmful one.
+
+**What would still kill this:** all four regions come from one vendor
+(Bloomberg), so a shared data-processing artefact is not ruled out — the US
+CRSP series is the independent check. Forward windows overlap, so p is a floor.
+And there are no costs, no execution and no gates here: it is a conditional
+return, not a strategy.
+
+**Trials spent on this idea: 3** (same-day, ±3d pair/triple, 4-region).
