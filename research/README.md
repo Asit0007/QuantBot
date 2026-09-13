@@ -335,3 +335,61 @@ And there are no costs, no execution and no gates here: it is a conditional
 return, not a strategy.
 
 **Trials spent on this idea: 3** (same-day, ±3d pair/triple, 4-region).
+
+### Four kill-tests — all failed to kill it
+
+Each was designed to destroy the effect, not confirm it. Cheapest and deadliest
+first (`research/breadth_killtests.py`).
+
+**1. Placebo — shuffle the breadth labels.** Real +1.28/+1.18/+1.33% at
+5/10/20d; shuffled −0.40/+0.62/+0.59%. Largely destroyed.
+⚠️ *Weakness in my own test:* this was a **single shuffle draw**, not a
+distribution, and the shuffled sample is ~105 vs the real 418. The +0.62%
+residual at 10d is therefore uninterpretable. A proper placebo repeats the
+shuffle a few thousand times and reports where the real value sits. **Redo this
+before trusting it.**
+
+**2. Vendor — swap NORTHAM (Bloomberg) for US (CRSP).** An independent data
+lineage; a shared processing artefact cannot survive it.
+
+| horizon | b=4 | b=1 | diff | p |
+|---|---|---|---|---|
+| 5d | +0.72% | −0.76% | **+1.48%** | 0.000 |
+| 10d | +0.95% | −0.37% | **+1.31%** | 0.000 |
+| 20d | +1.37% | −0.03% | **+1.41%** | 0.001 |
+
+**Stronger** than the all-Bloomberg baseline. Not a vendor artefact.
+
+**3. Sub-period — by decade.** This is gate 5's logic, and it is what killed
+every BTC trend gate (all of which leaned on 2024).
+
+| decade | diff (10d) | p | n |
+|---|---|---|---|
+| 1990–1999 | +1.22% | 0.030 | 56/103 |
+| 2000–2009 | +1.24% | 0.028 | 117/76 |
+| 2010–2019 | +0.85% | 0.052 | 137/61 |
+| 2020–2026 | +1.46% | 0.021 | 107/44 |
+
+Holds in **all four decades**. No single regime carries it.
+
+**4. Trend control — is breadth just "global uptrend"?** The most likely killer:
+"all four crossed up" may simply mean momentum, and buying momentum is not news.
+Compared b=4 vs b=1 *within* matched trailing-60d-return terciles.
+
+| tercile | 5d diff | p | 10d diff | p |
+|---|---|---|---|---|
+| **weak trend** | **+1.84%** | 0.000 | **+1.64%** | 0.003 |
+| mid trend | +1.13% | 0.000 | +1.44% | 0.000 |
+| strong trend | +0.93% | 0.000 | +0.44% | 0.239 |
+
+3/3 terciles at 5d, 2/3 at 10d — **and the effect is STRONGEST in weak trend**,
+which is the opposite of what a momentum proxy would produce. If breadth were
+just trend in disguise it would concentrate in the strong tercile. It does the
+reverse.
+
+### Standing caveats
+
+Overlapping forward windows mean every p is a floor. This is still a
+**conditional return, not a strategy** — no entry rule, no exit, no costs, no
+position sizing, and none of the eight gates have been applied to a tradeable
+version of it. And the placebo needs redoing properly.
