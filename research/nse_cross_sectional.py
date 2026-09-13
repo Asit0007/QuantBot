@@ -105,7 +105,8 @@ def load_panel(start: str, end: str) -> pd.DataFrame:
 
 def run_study(panel: pd.DataFrame, cfg: MarketConfig, *,
               universe_size: int = UNIVERSE_SIZE,
-              rebalance_days: int = REBALANCE_DAYS, verbose: bool = True):
+              rebalance_days: int = REBALANCE_DAYS, verbose: bool = True,
+              indicator_fn=None, exit_model: str = "stop"):
     dates = sorted(panel["date"].unique())
     if len(dates) < WARMUP_BARS * 2:
         raise SystemExit(f"only {len(dates)} sessions — need more history")
@@ -126,7 +127,10 @@ def run_study(panel: pd.DataFrame, cfg: MarketConfig, *,
     for s in union:
         f = ad.symbol_frame(s)
         if len(f) >= WARMUP_BARS + 20:
-            frames[s] = compute_indicators(f, cfg)
+            # compute_indicators always runs: it supplies ATR, which the
+            # protective stop needs regardless of which signal is layered on.
+            g = compute_indicators(f, cfg)
+            frames[s] = indicator_fn(g, cfg) if indicator_fn else g
     if verbose:
         print(f"  symbols with enough history: {len(frames)}")
 
@@ -135,7 +139,7 @@ def run_study(panel: pd.DataFrame, cfg: MarketConfig, *,
                        ratchet_down_after=10)
     st = new_state(START_BALANCE)
     trades: list[dict] = []
-    eng = MarketEngine(cfg, ad, cm, st, exit_model="stop", paper=True,
+    eng = MarketEngine(cfg, ad, cm, st, exit_model=exit_model, paper=True,
                        on_trade=trades.append)
 
     current: list[str] = []

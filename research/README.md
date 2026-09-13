@@ -22,6 +22,46 @@ Universe: point-in-time top-50 by trailing median turnover, rebalanced ~monthly
 | 1 | 2026-09-13 | BTC signal shape ported as-is: RSI div + MACD cross + volume>2×SMA20, ATR(3.0) stop, long only, 1×, 5 concurrent. Partial range 2015-01→2021-01 | 16 trades, WR 6.2%, −29.7%. **All five gates FAIL** | **REJECTED** |
 | 1b | 2026-09-13 | Same config, **full range 2015-01→2026-09** (2,883 sessions, 224 symbols ever selected) | 27 trades, WR 22.2%, **+29.1%**. **All five gates still FAIL** | **REJECTED** |
 
+| 1c | 2026-09-13 | Config #1 on **split-adjusted** data, full range | 24 trades (3 fake ones removed), WR 25.0%, +33.0%. **Gates 1-5 FAIL, gate 6 FAIL (DSR 0.461), gate 8 PASS (marginal)** | **REJECTED** |
+| 2 | 2026-09-13 | **Squeeze-break**: BB(20,2) bandwidth in bottom quartile of trailing 252d → upper-band break on >1.5× median volume; **exit on SAR(0.02,0.20) flip**, ATR stop underneath | 603 trades, WR 42.8%, **−6.1%**. **Gates 1-5 FAIL, gate 6 FAIL (DSR 0.119), gate 8 PASS** | **REJECTED** |
+
+### Config #2 — the mechanical fix worked, and there is still no edge
+
+Config #2 existed to test one specific hypothesis: that config #1 failed for a
+*mechanical* reason rather than an absence of signal. Its exit fired on ~0.02%
+of daily bars, so the ATR stop was the only way out and a ~0% win rate followed
+by construction.
+
+**The fix worked exactly as predicted.** SAR always eventually exits:
+
+| | config #1c | config #2 |
+|---|---|---|
+| trades | 24 | **603** |
+| win rate | 25.0% | **42.8%** |
+| best trade as share of gross | 49% | **4%** |
+
+A real sample, a plausible win rate, and no single-trade concentration — the
+opposite of config #1 on every structural measure. And it still loses money.
+
+**Gate 1 is the tell:** in-sample PF 1.10 (+26,122), out-of-sample PF 0.77
+(−32,157). Profitable while being fitted, loss-making afterwards.
+
+**The fee question, and why it does NOT rescue this.** Fees were 35,384 on a
+100,000 account, so the obvious thought is that a real edge is merely being
+taxed away — gross +29,349 versus net −6,035. It does not survive contact with
+the benchmark: **+29,349 over 11.7 years is 2.24%/yr GROSS, against 5.6%/yr for
+equal-weight buy-and-hold of the same universe.** Even with every rupee of
+friction removed, it loses to doing nothing. This is not a cost problem.
+
+(BTC reached the same verdict by a different route — its log closes
+"cheaper fees, trade faster" permanently, having measured 5m at PF 0.81 and 3m
+at PF 0.87 *at the zero-fee bound*: the failures were in the signal, not the
+cost.)
+
+**Gate 7 became computable** once two configs existed: PBO 0.40 across 70 CSCV
+splits. Directional only — CSCV truncates to the shorter series, so it compared
+just 24 trades per config.
+
 ### Config #1b — why a *positive* headline is still a rejection
 
 The full range flipped the headline from −29.7% to **+29.1%**, and it changes

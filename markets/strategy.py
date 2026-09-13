@@ -230,3 +230,80 @@ def fit_to_margin(sizing: dict, free_balance: float, cfg: MarketConfig) -> dict:
         "dollar_risk": sizing["dollar_risk"] * ratio,
         "scaled_to": ratio,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  SQUEEZE-BREAK — Bollinger regime filter + Parabolic SAR exit
+# ══════════════════════════════════════════════════════════════════════
+#
+# ⚠️ THIS FAMILY IS ALREADY REJECTED ON CRYPTO. backtest/README.md records
+# "BB + Parabolic SAR (± RSI) across 5m-4h: 0/20 with bootstrap p5 > 1;
+# both held-out validations failed." Twenty configurations, zero survivors.
+# DO NOT re-run it on BTC. It is tested here only because equities are a
+# different market where it has never been tried.
+#
+# WHY IT IS WORTH ONE TEST HERE, and this is a mechanical argument rather
+# than a hopeful one: config #1 failed for a DIAGNOSED reason — its exit
+# (wait for an opposite 3-gate signal) fires on ~0.02% of daily bars, so it
+# almost never triggers and the ATR stop became the only way out. A strategy
+# where essentially every trade exits at its stop has a win rate near zero
+# by construction, and config #1 duly printed 6.2%.
+#
+# Parabolic SAR ALWAYS eventually exits. That is a mechanical fix to a
+# mechanical failure. The roles are deliberately inverted from config #1:
+# here Bollinger is a REGIME FILTER and SAR is the EXIT, where config #1 was
+# entry-driven with a vestigial exit.
+#
+# THE HONEST TENSION, recorded so it is not discovered later as a surprise:
+# this repo's own BTC research concludes "never truncate a position — every
+# mechanism that shortens or truncates destroyed value; 75% of profit comes
+# from moves >3%." SAR truncates by construction. That finding came from a
+# fat-tail harvester on 24/7 data; equities mean-revert more. Genuinely
+# unknown, which is the only reason to spend a trial on it.
+
+def compute_bb_sar(df: pd.DataFrame, cfg: MarketConfig, *,
+                   bb_window: int = 20, bb_dev: float = 2.0,
+                   squeeze_lookback: int = 252, squeeze_pct: float = 0.25,
+                   sar_step: float = 0.02, sar_max: float = 0.20,
+                   vol_mult: float = 1.5) -> pd.DataFrame:
+    """Squeeze-break signal columns: `sig_long` and `sig_exit`.
+
+    Entry: volatility squeeze (BB bandwidth in the bottom `squeeze_pct` of
+    its trailing distribution) THEN an upside break of the upper band, on
+    above-median volume.
+    Exit: SAR flips to above price.
+
+    The squeeze percentile is computed on a TRAILING window and shifted one
+    bar, so a bar can never be judged against a distribution that includes
+    itself or anything after it.
+    """
+    from ta.trend import PSARIndicator
+    from ta.volatility import BollingerBands
+
+    d = df.copy()
+    bb = BollingerBands(close=d["close"], window=bb_window, window_dev=bb_dev)
+    d["bb_h"] = bb.bollinger_hband()
+    d["bb_l"] = bb.bollinger_lband()
+    d["bb_w"] = bb.bollinger_wband()
+
+    # Rank today's bandwidth against its own trailing history. shift(1) is
+    # what keeps it point-in-time.
+    d["bb_w_pct"] = (d["bb_w"].rolling(squeeze_lookback, min_periods=60)
+                     .rank(pct=True).shift(1))
+    squeeze = d["bb_w_pct"] <= squeeze_pct
+
+    psar = PSARIndicator(high=d["high"], low=d["low"], close=d["close"],
+                         step=sar_step, max_step=sar_max)
+    d["sar"] = psar.psar()
+
+    med_vol = d["volume"].rolling(20, min_periods=10).median().shift(1)
+    breakout = (d["close"] > d["bb_h"]) & (d["close"].shift(1) <= d["bb_h"].shift(1))
+
+    # The squeeze must have been present RECENTLY, not necessarily on the
+    # breakout bar itself — by definition the break widens the bands, so
+    # requiring a simultaneous squeeze would reject every real signal.
+    recent_squeeze = squeeze.rolling(5, min_periods=1).max().astype(bool)
+
+    d["sig_long"] = (breakout & recent_squeeze & (d["volume"] > vol_mult * med_vol)).fillna(False)
+    d["sig_exit"] = (d["sar"] > d["close"]).fillna(False)
+    return d

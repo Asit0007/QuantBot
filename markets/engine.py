@@ -272,7 +272,16 @@ class MarketEngine:
 
         # 5. Exits.
         pos = self.st["positions"].get(symbol)
-        if pos is not None:
+        if pos is not None and "sig_exit" in candle.index:
+            # Precomputed exit (e.g. a SAR flip). Still honour the protective
+            # stop underneath it — an exit signal is not a risk control.
+            price = float(candle["close"])
+            if bool(candle.get("sig_exit")):
+                self.close_position(symbol, candle, "signal", candle_n, now)
+            elif pos["side"] == "long" and price <= pos["stop_price"]:
+                self.close_position(symbol, candle, "stop", candle_n, now)
+            pos = self.st["positions"].get(symbol)
+        elif pos is not None:
             side, stop = pos["side"], pos["stop_price"]
             price = float(candle["close"])
             atr = float(candle["atr"]) if not math.isnan(candle["atr"]) else 0.0
@@ -314,6 +323,15 @@ class MarketEngine:
         if paused:
             return
         if len(self.st["positions"]) >= self.cfg.max_concurrent_positions:
+            return
+
+        # A precomputed `sig_long` column overrides the built-in signal. This
+        # is how an alternative strategy plugs in without the engine growing a
+        # branch per idea — and it leaves the BTC path byte-identical, which
+        # the replay gate verifies.
+        if "sig_long" in candle.index:
+            if bool(candle.get("sig_long")):
+                self.open_position(symbol, "long", candle, candle_n, now)
             return
 
         if bull > 0 and bool(candle.get("macd_bull_cross")) and bool(candle.get("high_vol")):
