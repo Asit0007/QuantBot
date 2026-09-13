@@ -136,6 +136,20 @@ class AlwaysOpenCalendar(MarketCalendar):
 class SessionCalendar(MarketCalendar):
     """Markets that close — NSE (XNSE), NYSE (XNYS), CME (CMES).
 
+    CALENDAR CODES: there is NO "XNSE" in exchange_calendars — India is
+    served by XBOM/BSE/XBSE only. NSE and BSE share one national trading
+    calendar (same holidays, same 09:15-15:30 session), so XBOM is the
+    correct proxy for NSE and not a compromise. Validated against reality
+    rather than assumed: XBOM reports 2019-09-02 as a non-session, and
+    NSE's own bhavcopy archive 404s that date (Ganesh Chaturthi) while
+    serving 2019-09-03. Its session bounds come back as 03:45-10:00 UTC,
+    which is 09:15-15:30 IST.
+
+    COVERAGE FLOOR: XBOM's first session is 2006-09-13. The bhavcopy
+    archive reaches back to 2000, so pre-2006 data has no calendar to
+    validate it against — treat 2006-09-13 as the usable start of any
+    NSE study rather than silently trusting six earlier years.
+
     Backed by `exchange_calendars` rather than a hand-rolled holiday table.
     Holiday data has a long tail (special sessions, half-days, one-off
     closures, muhurat trading on NSE) and getting it wrong does not raise —
@@ -229,7 +243,8 @@ class SessionCalendar(MarketCalendar):
 # runs the crypto path.
 CALENDARS = {
     "btc":        lambda: AlwaysOpenCalendar(),
-    "nse_stocks": lambda: SessionCalendar("XNSE"),
+    # XBOM, not XNSE — no NSE calendar exists; see SessionCalendar's docstring.
+    "nse_stocks": lambda: SessionCalendar("XBOM"),
     "us_indices": lambda: SessionCalendar("XNYS"),
 }
 
