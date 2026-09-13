@@ -187,6 +187,63 @@ that restructured).
 
 ---
 
-## US indices
+## US market
 
-Not started. Blocked on a free Alpaca key.
+**Unblocked without a key.** The Ken French data library (Dartmouth, from CRSP)
+publishes daily US total-market returns free: **26,296 sessions, 1926-07-01 →
+2026-07-31, CAGR 10.26%** — the textbook US equity return, which is the sanity
+check that the parse is right. `markets/adapters/us_french.py`.
+
+Every other free US source is walled: Yahoo 429, Stooq serves a SHA-256
+proof-of-work challenge, Tiingo 403, Alpaca 401.
+
+**Limits, stated plainly:** these are RETURNS, so a price index can be
+compounded but there is no genuine open/high/low. ATR stops, Parabolic SAR and
+intrabar checks **cannot** be computed — synthesising a high/low from a close
+would be inventing data, the same error as "repairing" a price move that was
+never a split. Close-only strategies only. Also the whole market, not SPX/NDX/DJI
+individually, and not single stocks. A real OHLCV feed (free Alpaca key) is still
+needed for Phase 3 proper.
+
+---
+
+## Cross-market breadth — the first genuinely promising result
+
+**Hypothesis:** multi-market is not just "more trades", it is a multiple-testing
+defence. One signal, run unchanged on uncorrelated markets, required to agree. If
+a spurious signal clears one market with probability p, clearing three is p³ —
+at p=0.05 that is a ~400× stronger filter at *zero* extra degrees of freedom,
+because nothing is tuned per market.
+
+Signal: MACD(12,26,9) bullish cross. Close-only so it computes identically
+everywhere, standard, and **not chosen by searching**.
+
+**Trial 1 (failed on measurement, not hypothesis):** requiring the signal on the
+*same calendar day* in every market found 7 such days in 2,763 → n=14. Three
+markets on different calendars and time zones essentially never produce a
+same-day point event. Agreement was re-specified as "within ±3 trading days",
+**pre-committed and tested once, not swept**.
+
+**Trial 2 — NSE + US, 11.6 years, b=2 (n=94) vs b=1 (n=135):**
+
+| horizon | b=2 | b=1 | diff | bootstrap 95% CI | permutation p |
+|---|---|---|---|---|---|
+| 5d | +0.78% | +0.09% | +0.69% | [+0.09%, +1.26%] | **0.029** |
+| 10d | +1.44% | +0.29% | +1.16% | [+0.37%, +1.95%] | **0.008** |
+| 20d | +2.09% | +1.05% | +1.04% | [−0.22%, +2.29%] | 0.107 |
+| 40d | +3.69% | +1.80% | +1.89% | [+0.03%, +3.79%] | 0.053 |
+
+Short horizons survive with CIs excluding zero. The 10d result clears Bonferroni
+across the four horizons tested (0.008 × 4 = 0.032).
+
+**Triple (BTC+NSE+US, 6.9y, n=33): nothing.** Every CI straddles zero, p from
+0.26 to 0.88. Under-powered — the window is bounded by BTC's 2019 start.
+
+**What this is and is not.** It is a conditional-return effect that survived a
+first significance screen — *not* a trading strategy: no entry rule, no exit, no
+costs, no gates. Forward windows overlap, so the p-values are floors. And it is
+the first thing in this project to look interesting after a proper screen, which
+is precisely when to be most suspicious.
+
+**Next:** more markets (a real US OHLCV feed, plus Europe/Japan via the same
+French library's international factors) to raise n and re-test the triple.
