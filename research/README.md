@@ -1,5 +1,55 @@
 # Multi-market research log
 
+---
+
+## BTC gate ablation — all three gates earn their place
+
+Ablation is **falsification, not search**: three pre-specified questions about
+the *existing* config, not a hunt for a new one. A gate is removed by forcing
+its column true for every bar, which deletes it as a filter while leaving
+sizing, stops, circuit breaker, funding and ratchet untouched — and because
+entry and exit read the same columns, each gate is ablated symmetrically.
+
+| variant | trades | WR | PF | final $ | liq | fees |
+|---|---|---|---|---|---|---|
+| **BASELINE (all 3)** | **127** | 53.5% | **1.60** | **2,531** | 13 | 65 |
+| no RSI-divergence | 1,385 | 37.3% | 0.90 | 923 | 5 | 314 |
+| no MACD cross | 1,058 | 59.0% | 0.89 | 820 | 29 | 330 |
+| no volume spike | 1,292 | 55.8% | 0.85 | 540 | 23 | 402 |
+
+**Every gate is load-bearing.** Removing any one explodes trade count 8-11×
+and pushes PF below 1. And the ablations are worse than they look: with $100
+seed plus ~$840 of DCA over the period, roughly **$940 was invested** — so
+$923, $820 and $540 are all *losses on capital*, against the baseline's $2,531.
+
+Detail worth noting: dropping MACD gives the **highest win rate** (59.0%) and
+the **worst liquidation count** (29 vs 13). Many small wins, a few ruinous
+losses — precisely the profile a naive win-rate optimisation would select for.
+
+### MACD sensitivity — closing the documented gap
+
+`backtest_sensitivity.py`'s "18/18 neighbours profitable" plateau claim swept
+DIV_WINDOW, DIV_SHIFT, DIV_MEMORY, VOL_MULT, RSI_LEN, VOL_SMA_PERIOD — **not
+MACD**, which appears **zero times** in the 552-line BTC log while sitting in 34
+of 44 scripts and in the live entry. Its 12/26/9 were textbook defaults carried
+in unexamined.
+
+| param | values tested | all PF > 1? |
+|---|---|---|
+| macd_fast | 10 / **12** / 14 | 1.51 / **1.60** / 1.55 ✓ |
+| macd_slow | 22 / **26** / 30 | 1.62 / **1.60** / 1.59 ✓ |
+| macd_signal_win | 7 / **9** / 11 | 1.53 / **1.60** / 1.78 ✓ |
+
+**9/9 profitable.** The plateau claim now covers all three gates — 27/27 rather
+than 18/18.
+
+⚠️ **`macd_signal_win=11` scores PF 1.78 and $2,901, beating production.** Do
+NOT adopt it. That is one neighbour out of nine on a single 127-trade sample,
+and switching to it would be selection on noise — the exact move this entire
+file argues against. It is recorded because the temptation is the finding.
+
+---
+
 Every configuration tested, and why it was kept or rejected. Mirrors the role
 `backtest/README.md` plays for BTC — with one deliberate difference: this folder
 is **committed and linted in CI**. The gitignored `backtest/` folder had all ten
