@@ -66,6 +66,12 @@ class MarketConfig:
     cb_trigger: int = 5
     cb_hours: int = 48
 
+    # ── DCA ──────────────────────────────────────────────────────────
+    dca_day: int = 10
+    dca_monthly: float = 10.0
+    dca_annual_growth: float = 0.10
+    start_year: int = 2026
+
     # ── Data ─────────────────────────────────────────────────────────
     candles_needed: int = 200
     warmup: int = 50
@@ -131,6 +137,10 @@ class MarketConfig:
             div_memory=_i("DIV_MEMORY", 3),
             cb_trigger=_i("CB_TRIGGER", 5),
             cb_hours=_i("CB_HOURS", 48),
+            dca_day=_i("DCA_DAY", 10),
+            dca_monthly=_f("DCA_MONTHLY_USD", 10.0),
+            dca_annual_growth=_f("DCA_ANNUAL_GROWTH", 0.10),
+            start_year=_i("START_YEAR", 2026),
             candles_needed=_i("CANDLES_NEEDED", 200),
             warmup=_i("WARMUP", 50),
         )
