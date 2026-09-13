@@ -56,12 +56,19 @@ from markets.config import MarketConfig                             # noqa: E402
 from markets.engine import MarketEngine                             # noqa: E402
 from markets.state import new_state                                 # noqa: E402
 from markets.strategy import compute_indicators                     # noqa: E402
+from overfitting import run_extended                                # noqa: E402
 from robustness import run_gates                                    # noqa: E402
 
 START_BALANCE = 100_000.0        # INR. A realistic retail account, not $100.
 UNIVERSE_SIZE = 50
 REBALANCE_DAYS = 21              # ~monthly
 WARMUP_BARS = 60                 # daily bars needed before indicators are valid
+
+# Every configuration ever run against NSE data. Increment it when you add
+# one — including the ones you discard. Under-reporting this is the single
+# easiest way to make gate 6 lie to you, and it is the input nobody wants to
+# fill in truthfully.
+NSE_TRIALS_SO_FAR = 3            # config 1 (partial), 1b (full), 1c (adjusted)
 
 
 def nse_config(**overrides) -> MarketConfig:
@@ -199,6 +206,10 @@ def main() -> int:
     trades, st = run_study(panel, cfg)
     summarise(trades, st, "BASELINE (RSI div + MACD + volume, long only)")
     run_gates(trades, label="BASELINE")
+    # n_trials is the honest count of configurations tried against NSE data.
+    # The ~100 BTC trials do not count here — different data — but every NSE
+    # variant from here on must increment it.
+    run_extended(trades, n_trials=NSE_TRIALS_SO_FAR, label="BASELINE")
     return 0
 
 

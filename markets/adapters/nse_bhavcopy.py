@@ -245,11 +245,18 @@ class NSEBhavcopyAdapter:
     """DataAdapter over the bhavcopy panel. Daily bars, cash equities."""
 
     def __init__(self, store: BhavcopyStore | None = None,
-                 panel: pd.DataFrame | None = None):
+                 panel: pd.DataFrame | None = None, adjust: bool = True):
         self.store = store or BhavcopyStore()
         self.calendar = self.store.calendar
         self._panel = panel
+        # Back-adjust for splits/bonuses by default. Raw bhavcopy prices make
+        # a 1:10 split look like a -90% day, which simultaneously fires RSI
+        # divergence and a volume spike — a fake signal AND a fake loss on
+        # anything held through it. adjust=False exists only so the two can
+        # be compared.
+        self.adjust = adjust
         self._by_symbol: dict[str, pd.DataFrame] = {}
+        self._events: dict[str, list] = {}
 
     def connect(self) -> None:
         if self._panel is None:
@@ -266,8 +273,18 @@ class NSEBhavcopyAdapter:
         if symbol not in self._by_symbol:
             d = self._panel[self._panel["symbol"] == symbol].copy()
             d = d.set_index("date").sort_index()
-            self._by_symbol[symbol] = d[["open", "high", "low", "close", "volume"]]
+            d = d[["open", "high", "low", "close", "volume"]]
+            if self.adjust:
+                from .corporate_actions import adjust as _adj, detect as _det
+                ev = _det(d)
+                self._events[symbol] = ev
+                d = _adj(d, ev)
+            self._by_symbol[symbol] = d
         return self._by_symbol[symbol]
+
+    def adjustment_events(self, symbol: str) -> list:
+        self.symbol_frame(symbol)
+        return self._events.get(symbol, [])
 
     def fetch_candles(self, symbol: str, limit: int) -> pd.DataFrame:
         return self.symbol_frame(symbol).tail(limit)
