@@ -2,6 +2,49 @@
 
 ---
 
+## Where this research leads — the vault product (direction set 2026-09-14)
+
+This research cycle ended with one validated strategy and ~1,190 rejected
+configurations. The conclusion was that **the search space is exhausted and the
+binding constraint was never strategy** — it was that the bot cannot trade a $100
+account, and that a low-exposure timing strategy loses to buy-and-hold in every
+market with upward drift.
+
+The work now feeds a product rather than another config sweep: a **vault with
+fund mechanics**, modelled on mutual funds and ETFs. Users hold *units*; unit
+value tracks NAV; an allocator shifts weight between four holdings.
+
+**The four holdings are deliberately not four alphas.** There is exactly one
+validated strategy, so:
+
+| slot | what it is | why it belongs |
+|---|---|---|
+| Bot | quant_bot's BTC signal | the one validated strategy — PF 1.60 |
+| Hold | spot BTC | beat the bot in **every** market tested here |
+| Stake | staking / lending yield | real, verifiable, uncorrelated |
+| Cash | stablecoin | the risk-off leg; does real work in drawdowns |
+
+This rests on the only positive finding this repo ever produced: a **75/25
+bot/BTC blend lifting Sharpe 1.49 → 1.67** on a 0.019 daily-return correlation.
+Portfolio construction beat signal search, repeatedly and across every market.
+
+**Build order: off-chain first, blockchain last.** Running contracts costs money
+the project does not have yet, and the unit/NAV mechanic is ordinary software. A
+chain makes the vault *non-custodial* and *shareable* — it is not what makes it
+work. It gets added once the product earns.
+
+⚠️ **The order has a consequence worth stating plainly.** The non-custodial design
+was what kept this outside securities territory: a contract held the assets and
+users could always exit without the manager. Off-chain, holding other people's
+money and issuing units against it is a **collective investment scheme** and is
+regulated. The clean version until a chain exists is **own capital only** — which
+is a complete portfolio piece and a complete demo, and carries no licence
+question.
+
+---
+
+---
+
 ## Constant-notional test — the 5× liquidations are a FEATURE, not deadweight
 
 Under nostop sizing, `notional / corpus = risk_per_trade × leverage`. Production
