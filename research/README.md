@@ -2,6 +2,88 @@
 
 ---
 
+## US market — breadth, out-of-sample. Best sample yet.
+
+India is closed as a trading market (see the SAR+Bollinger grid: 0 of 576 configs
+profitable). It qualifies as long-term buy-and-hold only. US is the replacement.
+
+**Clean out-of-sample design:** North America was one of the four regions used to
+*discover* breadth, so it is EXCLUDED. Signal computed from **Europe + Japan +
+Asia-Pacific only** (max breadth 3); the US is the untouched market being
+predicted — and it is CRSP-based, a different vendor and construction from the
+three Bloomberg regions driving the signal.
+
+**Forward returns, 36.1 years, n=773:**
+
+| horizon | all 3 agree | one or none | diff | perm p |
+|---|---|---|---|---|
+| 5d | +0.60% | +0.13% | +0.47% | **0.000** |
+| 10d | +0.82% | +0.35% | +0.46% | **0.001** |
+| 20d | +1.08% | +0.87% | +0.21% | 0.214 |
+
+Same shape as every other market tested: real at 5–10 days, gone by 20.
+
+**As a tradeable book** — 10-day hold, 10bps round trip, **194 trades** (the
+largest sample in the project):
+
+| | |
+|---|---|
+| win rate | **70.1%** |
+| profit factor | **3.15** |
+| equity / CAGR | 13.52× over 36y · **7.5%/yr** |
+| max drawdown | 19.9% |
+| exposure | 21% of the time |
+| buy & hold | **44.15×** |
+| B&H scaled to 21% exposure | ~2.25× ← the bar timing skill must clear |
+
+**Gates: 6 of 7 applicable PASS. Gate 5 FAILS on 2009.**
+
+| gate | result | |
+|---|---|---|
+| 1 OOS | IS PF 2.47 → OOS 6.31 | PASS |
+| 2 bootstrap | p5 **2.29**, P(PF≤1) 0.0% | PASS |
+| 3 concentration | best trade 3% of gross | PASS |
+| 4 per-year | **31/37** years positive | PASS |
+| 5 LOYO | **2009 at the 0.5th percentile** | **FAIL** |
+| 6 deflated Sharpe | DSR **1.000** over 12 trials | PASS |
+| 8 CPCV | **100%** of purged folds PF > 1 | PASS |
+
+### What the gate-5 failure actually means
+
+Gate 5 is a **relative** test — it asks whether one year carries more than its
+share, not whether the rest is unprofitable. Those are different claims, so:
+
+| set | trades | PF | p5 | equity |
+|---|---|---|---|---|
+| all years | 194 | 3.15 | 2.30 | 13.52× |
+| excluding 2009 | 190 | 2.93 | 2.15 | 10.45× |
+| excluding 2008–09 (GFC) | 182 | 3.04 | 2.19 | 9.90× |
+| **excluding 2008, 2009 and 2020** | 176 | **2.95** | **2.13** | 7.94× |
+
+2009 contributed 4 trades averaging +6.69% — genuinely disproportionate, which is
+why the gate fired. But **strip every crisis year and PF is still 2.95 with p5
+2.13.** The strategy *leans* on 2009; it does not *depend* on it. That is a
+materially different finding from the BTC trend gates, which failed gate 5 and
+collapsed.
+
+### The honest bottom line
+
+The signal has real timing skill on US equities: 13.52× against ~2.25× for
+exposure-matched random timing. It still **loses to simply holding SPY** (44.15×),
+exactly as on NSE — because a 21%-exposure strategy cannot beat a market that
+drifts up 10%/yr, regardless of skill.
+
+**This is a market-timing overlay, not a replacement for being long.** Its likely
+use is sizing or hedging an existing position, not switching in and out.
+
+**Blocked on:** real SPY OHLC for a stop rule. Every free source is key-walled —
+Yahoo 429, Stooq proof-of-work, Twelve Data 401, Nasdaq 403, FMP 401, Alpha
+Vantage 200-with-a-signup-notice.
+
+---
+
+---
+
 ## SAR + Bollinger "scale out in a mature trend" — 1,152 configs, REJECTED
 
 Asit's specification, and a genuinely untested one: fade the upper Bollinger band
