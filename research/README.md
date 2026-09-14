@@ -33,6 +33,31 @@ the project does not have yet, and the unit/NAV mechanic is ordinary software. A
 chain makes the vault *non-custodial* and *shareable* — it is not what makes it
 work. It gets added once the product earns.
 
+### Build order
+
+| phase | weeks | what |
+|---|---|---|
+| 1 | 1–2 | Vault core — units, NAV, subscription/redemption accounting |
+| 2 | 3–4 | Allocation across the four holdings, rebalance with bounds |
+| 3 | 5–6 | The allocator — port quant_bot's signal to emit weights, backtest on the eight gates |
+| 4 | 7–8 | Demo surface — live dashboard, then the deposit/redeem flow |
+| 5 | 9 | Rehearse, and record a fallback video |
+
+**Start with the unit-accounting test, written before the logic it tests.** A
+depositor entering at one NAV and exiting at another must receive exactly their
+proportional share, under a fuzz test. It needs no strategy, no frontend and no
+chain — and if that maths is wrong, every number downstream is wrong.
+
+Budget is roughly **150 hours**: nine weeks of evenings and weekends, because 30
+outreach touches a day and a job search run in parallel. Scope is set against that
+number, not against what would be nice to build.
+
+**When the chain phase eventually arrives:** EVM L2 (Base or Arbitrum) using
+**ERC-4626**, the tokenized-vault standard with audited reference code — not
+Solana. There is no Rust or Anchor anywhere in the workspace while
+`learning/Crypto-DEX` already runs wagmi/viem, and L2 fees are now fractions of a
+cent, so the cost argument that originally favoured Solana has closed.
+
 ⚠️ **The order has a consequence worth stating plainly.** The non-custodial design
 was what kept this outside securities territory: a contract held the assets and
 users could always exit without the manager. Off-chain, holding other people's
