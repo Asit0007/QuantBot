@@ -387,6 +387,58 @@ which is the opposite of what a momentum proxy would produce. If breadth were
 just trend in disguise it would concentrate in the strong tercile. It does the
 reverse.
 
+### Placebo, done properly — 3,000 circular shifts
+
+The first attempt was a single shuffle draw and I refused to count it. Redone
+with **circular shifts**: a shift preserves the full autocorrelation of both
+breadth and returns while destroying only their alignment, which is the correct
+null for "does breadth line up with future returns beyond chance?" A plain
+shuffle also destroys serial structure, making the null easier to beat than it
+should be.
+
+| horizon | real | null mean | null sd | real's percentile | p |
+|---|---|---|---|---|---|
+| 5d | +1.28% | −0.01% | 0.33% | **100.0th** | **0.0000** |
+| 10d | +1.18% | +0.01% | 0.51% | 98.5th | 0.0293 |
+| 20d | +1.33% | −0.00% | 0.73% | 96.8th | 0.0647 |
+
+The null centres on zero, so the test itself is clean. In sigma terms: **3.9σ at
+5d, 2.3σ at 10d, 1.8σ at 20d** — real and decaying with horizon, which is what a
+genuine short-horizon effect should look like.
+
+### OUT-OF-SAMPLE — the decisive test
+
+Breadth computed **only** from the four Ken French regions, then used to predict
+markets that played no part in discovering it.
+
+**NSE (11.6 years, never used in discovery):**
+
+| horizon | b=4 | b≤1 | diff | p |
+|---|---|---|---|---|
+| 5d | +0.97% | +0.13% | +0.83% | **0.000** |
+| 10d | +1.64% | +0.42% | +1.22% | **0.000** |
+| 20d | +2.48% | +1.14% | +1.34% | **0.001** |
+
+**BTC (6.9 years, never used in discovery):**
+
+| horizon | b=4 | b≤1 | diff | p |
+|---|---|---|---|---|
+| 5d | +2.20% | +0.59% | +1.61% | **0.026** |
+| 10d | +4.60% | +1.16% | **+3.43%** | **0.001** |
+| 20d | +5.84% | +3.37% | +2.47% | 0.120 |
+
+**A breadth signal built from Europe, Japan, Asia-Pacific and North America
+predicts Indian equities and Bitcoin.** Neither market contributed to finding
+it. That is genuine out-of-sample transfer, not another in-sample slice.
+
+**BTC is the stronger evidence of the two**, precisely because it is the less
+correlated market — Indian equities co-move with global equities, so some NSE
+transfer is expected mechanically. Bitcoin has no such excuse, and it shows the
+largest effect of any market tested (+3.43% at 10d).
+
+The consistent picture across every test: **real at 5–10 day horizons, decaying
+by 20.**
+
 ### Standing caveats
 
 Overlapping forward windows mean every p is a floor. This is still a
