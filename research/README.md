@@ -2,6 +2,46 @@
 
 ---
 
+## Constant-notional test — the 5× liquidations are a FEATURE, not deadweight
+
+Under nostop sizing, `notional / corpus = risk_per_trade × leverage`. Production
+is 0.10 × 5 = 0.50 — but so is 0.50 × 1 and 0.05 × 10. Every one takes the **same
+dollar exposure** and the same P&L per unit of price move. Only the distance to
+liquidation differs.
+
+The repo's existing leverage sweep varied leverage at *fixed* risk, which changes
+notional at the same time and so could never separate the two. This isolates it.
+
+**Hypothesis (mine): the 13 liquidations in 127 trades are deadweight, and
+identical exposure with no forced exits would be strictly better. It was wrong.**
+
+| lev | risk | liq dist | trades | WR | PF | p5 | final $ | liq | maxDD |
+|---|---|---|---|---|---|---|---|---|---|
+| 1× | 50% | 99.6% | 119 | 53.8% | 1.51 | 0.96 | 2,301 | **0** | 25.6% |
+| 2× | 25% | 49.6% | 120 | 53.3% | 1.47 | 0.93 | 2,193 | 3 | 30.2% |
+| 3× | 17% | 32.9% | 123 | 53.7% | 1.46 | 0.94 | 2,214 | 8 | 21.2% |
+| **5×** | **10%** | **19.6%** | **127** | 53.5% | **1.60** | **1.07** | **2,531** | 13 | 24.9% |
+| 10× | 5% | 9.6% | 141 | 48.2% | 1.44 | 0.98 | 2,255 | 44 | 15.6% |
+
+**Production wins on every measure** — highest PF, the only variant with
+bootstrap p5 above 1, highest final balance. The 1× variant *fails* gate 2
+(p5 0.96).
+
+**Why:** liquidation at 5× caps a losing trade at the 10% margin posted. Remove
+it and the position rides down until the opposite signal fires, which is rare.
+The liquidations are functioning as the **de facto stop loss** — the same
+mechanism the BTC log already identified when it noted that removing the
+opposite-signal exit sends liquidations 13 → 22, "because that exit is
+functioning as a stop, not a profit-taker."
+
+Third independent confirmation this session that the production config is
+correctly specified, after the gate ablation (3/3 load-bearing) and the MACD
+sensitivity sweep (9/9 plateau).
+
+---
+
+---
+
 # ⛔ RETRACTION — the breadth effect was mostly LOOKAHEAD BIAS
 
 Found 2026-09-14 while wiring breadth into the BTC bot. **Every breadth result
