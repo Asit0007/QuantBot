@@ -439,6 +439,64 @@ largest effect of any market tested (+3.43% at 10d).
 The consistent picture across every test: **real at 5–10 day horizons, decaying
 by 20.**
 
+---
+
+## The tradeable strategy — all eight gates, and two corrections
+
+Signal: breadth == 4 from the four French regions. Traded: **NSE and BTC only**
+— the markets that played no part in discovering it, so the entire backtest is
+out-of-sample by construction. Entry long at the close on the first b=4 day
+while flat; exit after 10 trading days (read off the measured decay, not
+searched). Costs 30bps NSE / 20bps BTC round trip. No stop — a limitation, not a
+choice defended.
+
+**Gates: 7 of 7 applicable PASS** (gate 7 needs a second config).
+
+| gate | result | |
+|---|---|---|
+| 1 OOS | IS PF 3.27 / OOS PF 5.47 | PASS |
+| 2 bootstrap | p5 **2.24**, P(PF≤1) **0.0%** | PASS |
+| 3 concentration | best trade 10% of gross | PASS |
+| 4 per-year | 9/12 positive | PASS |
+| 5 LOYO | worst year 2020 at 13.8th pct | PASS |
+| 6 deflated Sharpe | SR 0.381 vs null 0.157 over 10 trials → **DSR 0.998** | PASS |
+| 8 CPCV | **96%** of purged splits above PF 1 | PASS |
+
+101 trades, 61.4% WR, PF 3.68. Cost-insensitive: still 2.44 PF at 120bps.
+
+### ⚠️ Two corrections that change the interpretation
+
+**1. My combined equity was wrong by ~4×.** `cumprod` over interleaved trades
+from two markets treats them as sequential *all-in* bets of the whole account.
+Splitting capital properly: **18.60x → 4.70x, CAGR 29.4% → 14.6%.** The gates
+are unaffected — they score per-trade P&L — but the headline was inflated by my
+own bug.
+
+**2. Versus buy-and-hold, the two markets disagree sharply:**
+
+| market | strategy | buy & hold | exposure | verdict |
+|---|---|---|---|---|
+| NSE | 1.82x | **4.62x** | 21% | **loses badly to holding** |
+| BTC | **10.23x** | 6.10x | 22% | beats holding on 1/5 the exposure |
+
+Mean net return per trade: NSE **+1.07%**, BTC **+6.59%**. **This is mostly a
+BTC strategy**, and BTC's leg is 40 trades over 6.9 years.
+
+The NSE result is subtler than "it failed": at 21% exposure, random timing would
+give roughly 4.62^0.21 ≈ 1.38x, and the strategy returned 1.82x — so the signal
+*does* add timing value there. It is just that in a strongly drifting market,
+**any** 21%-exposure strategy loses to buy-and-hold regardless of skill. Timing
+skill and beating buy-and-hold are different claims.
+
+### Honest status
+
+The effect is real and survives every test thrown at it, including the gates.
+But as a *strategy* it currently earns its keep on BTC and destroys value versus
+simply holding Indian equities. Before this is worth capital: a stop rule, a
+proper portfolio construction (the 75/25 bot/BTC blend in the BTC log lifted
+Sharpe 1.49→1.67 on a 0.019 correlation, so blending rather than switching is
+the lever), and a second config so gate 7 can finally answer.
+
 ### Standing caveats
 
 Overlapping forward windows mean every p is a floor. This is still a
