@@ -44,7 +44,7 @@ RNG = np.random.default_rng(20260914)
 def main() -> int:
     sig_px = pd.DataFrame({r: load_region(r)["close"] for r in SIGNAL_REGIONS}).dropna()
     sig = pd.DataFrame({r: macd_cross(sig_px[r]) for r in SIGNAL_REGIONS})
-    near = sig.rolling(2 * AGREE_WINDOW + 1, center=True, min_periods=1).max().astype(bool)
+    near = sig.rolling(2 * AGREE_WINDOW + 1, min_periods=1).max().astype(bool)
     br = near.sum(axis=1)
 
     us = load_region("US")["close"]

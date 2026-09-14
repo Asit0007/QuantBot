@@ -45,7 +45,7 @@ N_SHIFT = 3000
 def region_breadth():
     px = pd.DataFrame({r: load_region(r)["close"] for r in REGIONS}).dropna()
     sig = pd.DataFrame({r: macd_cross(px[r]) for r in REGIONS})
-    near = sig.rolling(2 * AGREE_WINDOW + 1, center=True, min_periods=1).max().astype(bool)
+    near = sig.rolling(2 * AGREE_WINDOW + 1, min_periods=1).max().astype(bool)
     return px, sig, near.sum(axis=1)
 
 

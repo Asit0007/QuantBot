@@ -119,8 +119,11 @@ def breadth_table(series: dict[str, pd.Series], names: list[str], label: str):
     px = pd.DataFrame({n: series[n].reindex(idx) for n in names}).dropna()
     sig = pd.DataFrame({n: macd_cross(px[n]) for n in names})
     # "Fired recently" rather than "fired today" — see AGREE_WINDOW.
-    near = sig.rolling(2 * AGREE_WINDOW + 1, center=True,
-                       min_periods=1).max().astype(bool)
+    # TRAILING, never centred. A centred window marks a bar as "signal fired
+    # recently" up to AGREE_WINDOW days BEFORE the signal exists — lookahead
+    # bias, and the exact class of bug that once produced a $2.4bn backtest in
+    # this repo. Trailing means breadth at time t uses only t-6..t.
+    near = sig.rolling(2 * AGREE_WINDOW + 1, min_periods=1).max().astype(bool)
     breadth = near.sum(axis=1)
 
     yrs = (px.index[-1] - px.index[0]).days / 365.25

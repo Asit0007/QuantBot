@@ -2,6 +2,79 @@
 
 ---
 
+# ⛔ RETRACTION — the breadth effect was mostly LOOKAHEAD BIAS
+
+Found 2026-09-14 while wiring breadth into the BTC bot. **Every breadth result
+published above this line was computed with a centred rolling window:**
+
+```python
+sig.rolling(2 * AGREE_WINDOW + 1, center=True, min_periods=1).max()
+```
+
+A centred window marks a bar as "signal fired recently" **up to three days
+BEFORE the signal exists**. Demonstrated directly: a signal on day 7 alone marks
+days 4, 5, 6, 7, 8, 9 — three of them in the future. Corrected to a trailing
+window, so breadth at time *t* uses only *t−6 … t*.
+
+This is the same class of bug as the swing detector that once produced a
+**$2.4 billion** backtest here. It got past me because the centred window is
+defensible for a *descriptive* forward-return statistic and indefensible the
+moment it gates a trade — and I carried it from the first into the second.
+
+### What the correction did
+
+| result | with lookahead | corrected |
+|---|---|---|
+| Placebo, 4 regions — 5d | p = **0.0000** | p = **0.2587** |
+| Placebo, 4 regions — 10d | p = 0.0293 | p = 0.4810 |
+| OOS transfer to **NSE** — 10d | +1.22%, p = **0.000** | +0.38%, p = **0.168** |
+| **US strategy** — profit factor | **3.15** | **1.25** |
+| **US strategy** — equity | **13.52×** | **1.49×** |
+| US strategy — gates | 6 of 7 pass | **fails 1, 2, 5, 6** |
+
+**The core four-region effect is gone. The transfer to Indian equities is gone.
+The US strategy is dead.** Everything I wrote about surviving four kill-tests
+applies to a statistic that had future information in it.
+
+### The one thing that survived
+
+Transfer to **BTC**, which is genuinely out-of-sample and got *stronger*:
+
+| horizon | b=4 | b≤1 | diff | perm p |
+|---|---|---|---|---|
+| 5d | +3.30% | +0.66% | **+2.64%** | **0.001** |
+| 10d | +3.34% | +1.22% | **+2.13%** | **0.039** |
+| 20d | +5.04% | +3.86% | +1.17% | 0.453 |
+
+n = 159. Real at 5–10 days, gone by 20 — the same decay shape as before.
+
+---
+
+## Breadth as a regime filter on the production BTC bot — REJECTED
+
+The obvious follow-up, since breadth still predicts BTC. Entries gated on
+breadth; exits never touched. Trailing window, and the daily series shifted one
+day so day D's close is only known to bars on D+1.
+
+| variant | trades | WR | PF | final $ | liq | exposure |
+|---|---|---|---|---|---|---|
+| **baseline (no filter)** | **127** | 53.5% | **1.60** | **2,531** | 13 | 90% |
+| breadth ≥ 2 | 44 | 40.9% | 1.03 | 1,335 | 11 | 74% |
+| breadth ≥ 3 | 27 | 33.3% | 0.90 | 1,224 | 12 | 63% |
+| breadth == 4 | 14 | 35.7% | 1.74 | 1,589 | 8 | 53% |
+
+**The filter destroys value at every threshold.** `breadth == 4` shows a higher
+PF (1.74) on **14 trades** while ending with $942 less.
+
+Why it fails despite breadth genuinely predicting BTC: the bot's entries are
+*already* highly selective — 127 trades in 7 years. The two signals compete for
+the same rare opportunities rather than complementing each other, so the filter
+removes profitable trades instead of bad ones.
+
+---
+
+---
+
 ## US market — breadth, out-of-sample. Best sample yet.
 
 India is closed as a trading market (see the SAR+Bollinger grid: 0 of 576 configs

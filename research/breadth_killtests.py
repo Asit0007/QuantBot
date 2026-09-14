@@ -47,7 +47,7 @@ HOR = [5, 10, 20]
 def panel(regions):
     px = pd.DataFrame({r: load_region(r)["close"] for r in regions}).dropna()
     sig = pd.DataFrame({r: macd_cross(px[r]) for r in regions})
-    near = sig.rolling(2 * AGREE_WINDOW + 1, center=True, min_periods=1).max().astype(bool)
+    near = sig.rolling(2 * AGREE_WINDOW + 1, min_periods=1).max().astype(bool)
     return px, sig, near.sum(axis=1)
 
 
