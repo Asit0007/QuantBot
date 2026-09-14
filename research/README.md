@@ -2,6 +2,68 @@
 
 ---
 
+## SAR + Bollinger "scale out in a mature trend" — 1,152 configs, REJECTED
+
+Asit's specification, and a genuinely untested one: fade the upper Bollinger band
+during a *prolonged* bull run, with SAR confirming the trend is still intact.
+
+**Why the earlier `backtest_bbsar.py` rejection did not cover it.** That script
+tested BREAKOUT (long above the upper band) and REVERSION (long off the lower
+band; shorts required SAR **already bearish**). Neither fades a still-intact
+uptrend, and nothing in this repo had ever used trend **age** as an input — only
+trend direction. It also swept 5m–4h and stopped there, with lower timeframes
+recorded as "strictly worse, monotonically". Daily was never reached.
+
+**Grid:** regime_n {30,60,120} × bb_win {20,50} × bb_dev {2.0,2.5} × sar_step
+{0.01,0.02} × sar_max {0.10,0.20} × scale_frac {0.33,0.50,1.00} × RSI {on,off} ×
+short leg {on,off} = 576 combos × 2 markets = **1,152 configurations**.
+
+### The distribution is the result, not the winner
+
+| market | n | min | p25 | **median** | p75 | max | share PF > 1 |
+|---|---|---|---|---|---|---|---|
+| BTC | 576 | 0.37 | 0.69 | **1.03** | 1.56 | 3.90 | 51% |
+| NSE | 576 | 0.22 | 0.52 | **0.63** | 0.73 | **1.01** | **0%** |
+
+**NSE: zero of 576 configurations profitable.** Not a marginal failure — the idea
+does not work on Indian equities under any parameter combination tested.
+
+**BTC: median PF 1.03, 51% above break-even.** That is the signature of a coin
+flip. A grid centred on 1.0 with half its mass either side is what pure noise
+produces.
+
+### Gate 6 is the whole story
+
+The best config (PF 3.90) passes gates 1–5 — **on 12 trades**.
+
+| | |
+|---|---|
+| observed Sharpe | 0.428 |
+| **expected max Sharpe from 1,152 random trials** | **0.994** |
+| **deflated Sharpe** | **0.0111 — FAIL** |
+
+The winner is **worse than what chance alone would produce** from a search this
+size. That is the cost of the sweep, made explicit.
+
+**Gate 7 reported PBO 0.0% (pass) and should be ignored here:** CSCV truncates to
+the shortest series, and the shortest config has ~12 trades, so it was computed
+on a degenerate sample. A gate that returns a number is not the same as a gate
+that means something.
+
+### One incidental finding, in Asit's favour and against him
+
+The top configs all use `scale_frac=1.00` — a **full** exit at the band, no core
+kept. The "keep a core" half of the specification is not what the best variants
+do, which independently echoes §7.10's finding that partial exits destroyed value
+on BTC.
+
+**Trials now spent on NSE: 580. On BTC: 576 for this family alone.** Every future
+test on this data is measured against those counts.
+
+---
+
+---
+
 ## BTC gate ablation — all three gates earn their place
 
 Ablation is **falsification, not search**: three pre-specified questions about
