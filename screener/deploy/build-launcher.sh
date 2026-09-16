@@ -4,9 +4,22 @@
 #
 #   ./deploy/build-launcher.sh
 #
-# Then, ONCE, by hand (cannot be scripted -- TCC grants are GUI-only):
-#   System Settings > Privacy & Security > Full Disk Access > +
-#   > select ~/Applications/Screener Daily.app > toggle it on
+# JobPipe's own docs (this pattern's origin) say a manual System Settings >
+# Privacy & Security > Full Disk Access grant is required. **Verified live
+# 2026-09-17 that this is NOT what actually happened for either app**:
+# `sqlite3 ~/Library/Application\ Support/com.apple.TCC/TCC.db "SELECT
+# service, client, auth_value FROM access WHERE client LIKE '%asitminz%'"`
+# shows JobPipe's launcher holds `kTCCServiceSystemPolicyDocumentsFolder`
+# (Documents Folder, a narrower grant than Full Disk Access) -- granted
+# 2026-09-10, and Asit confirms he never manually toggled anything for it.
+# The screener launcher had ZERO TCC row at all and still ran clean end to
+# end via `launchctl kickstart` the same day this was written (git fetch,
+# venv, full 5-market run, real Telegram send) -- no dialog, no block. Why
+# JobPipe's docs describe a manual step that neither app actually needed is
+# unresolved; if a FUTURE run ever fails with exit 126 / can't read the repo,
+# grant Documents Folder access (System Settings > Privacy & Security >
+# Files and Folders, NOT the Full Disk Access pane) to this app -- but don't
+# assume that step is needed before trying.
 #
 # Re-running this rebuilds the binary, which changes its cdhash, which can
 # make macOS ask for the grant again. Nothing here needs to change day to
@@ -49,6 +62,6 @@ codesign --verify --strict "$APP"
 echo "built  $APP"
 echo "  targets: $ROOT/deploy/run-daily.sh"
 echo
-echo "NEXT, and it cannot be scripted -- TCC grants are GUI-only:"
-echo "  System Settings > Privacy & Security > Full Disk Access > + "
-echo "  > $APP > turn it on"
+echo "Try 'launchctl kickstart -p gui/\$(id -u)/com.asitminz.screener.daily' now."
+echo "It worked with no manual TCC grant on 2026-09-17 -- see this script's"
+echo "header before assuming you need to touch System Settings."

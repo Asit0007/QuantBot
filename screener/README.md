@@ -215,18 +215,22 @@ branches stay unmerged, `main` stays exactly what's running in production.
    Screener.in template is mapped the way the equity one is here.
 4. **US S&P 500** — pick a real data source first (a free Alpaca key is the
    likeliest unblock per existing memory); don't build on an unverified one.
-5. ~~**Scheduling**~~ — **done 2026-09-16.** `deploy/` has the full launchd
-   setup: a signed launcher app (JobPipe's `~/Applications/*.app` pattern,
-   since a plain LaunchAgent gets TCC-denied under `~/Documents`) driving
-   `run-daily.sh` at 19:00 IST. It runs from a **dedicated worktree**,
-   `../quant_bot-screener` (branch `screener-scheduled`), not this checkout —
-   `value-rsi-screener` is a research branch that stays unmerged, and this
-   checkout gets switched to `main` for live-bot work, which would silently
-   break a job pointed here. The worktree hard-resets to
-   `origin/value-rsi-screener` on every run, so **a local commit on this
-   branch has no effect on the scheduled digest until it's pushed.** One
-   manual, one-time step remains and can't be scripted: grant the launcher
-   app Full Disk Access in System Settings > Privacy & Security (see
-   `deploy/build-launcher.sh`'s output for the exact path) — until that's
-   done, `launchctl kickstart` fires but the job exits without reading the
-   repo.
+5. ~~**Scheduling**~~ — **done 2026-09-16, verified end-to-end 2026-09-17.**
+   `deploy/` has the full launchd setup: a signed launcher app (JobPipe's
+   `~/Applications/*.app` pattern — a code identity for TCC to hang a grant
+   on, if one's ever needed) driving `run-daily.sh` at 19:00 IST. It runs
+   from a **dedicated worktree**, `../quant_bot-screener` (branch
+   `screener-scheduled`), not this checkout — `value-rsi-screener` is a
+   research branch that stays unmerged, and this checkout gets switched to
+   `main` for live-bot work, which would silently break a job pointed here.
+   The worktree hard-resets to `origin/value-rsi-screener` on every run, so
+   **a local commit on this branch has no effect on the scheduled digest
+   until it's pushed.**
+   **No manual TCC grant was actually needed.** JobPipe's own docs describe
+   a required System Settings > Privacy & Security > Full Disk Access step;
+   `launchctl kickstart` on this launcher ran clean on the first try —
+   `sqlite3`'ing `TCC.db` afterward showed zero grant row for it at all. See
+   `deploy/build-launcher.sh`'s header for the live evidence and what to
+   check if a *future* run ever does hit exit 126 (the actual TCC service
+   involved is `kTCCServiceSystemPolicyDocumentsFolder`, under Files and
+   Folders — not the Full Disk Access pane).
