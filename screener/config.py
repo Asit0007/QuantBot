@@ -39,10 +39,14 @@ MIN_SALES_CAGR_PCT = float(os.getenv("MIN_SALES_CAGR_PCT", "0.0"))
 # RSI overlay (entry timing only — see ValueInvesting.md's scoped exception).
 RSI_OVERSOLD = float(os.getenv("RSI_OVERSOLD", "30"))
 
-# Universe. UNIVERSE_TOP_N is the shared cap across every NSE tier (equity,
-# ETF, REIT, InvIT, SGB) — each ranked by its own turnover within its tier,
-# so e.g. "top 100" on a tier with only 11 names (Gold ETFs) is a no-op, not
-# an error. Narrowed 400 -> 100 on 2026-09-17, by request.
+# Universe. NSE equities got their own knob on 2026-09-17 (200, was folded
+# into UNIVERSE_TOP_N at 100) since Indian equities are the tier Asit cares
+# about sizing independently of the rest.
+EQUITY_TOP_N = int(os.getenv("EQUITY_TOP_N", "200"))
+# UNIVERSE_TOP_N is the shared cap for every OTHER NSE tier (ETF, REIT,
+# InvIT, SGB) plus the US equity (S&P 500) leg — each ranked by its own
+# turnover/volume within its tier, so e.g. "top 100" on a tier with only 11
+# names (Gold ETFs) is a no-op, not an error.
 UNIVERSE_TOP_N = int(os.getenv("UNIVERSE_TOP_N", "100"))
 TURNOVER_LOOKBACK_DAYS = int(os.getenv("TURNOVER_LOOKBACK_DAYS", "40"))
 # ETF tier is filtered to this name substring (case-insensitive, matched

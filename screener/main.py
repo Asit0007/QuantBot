@@ -25,7 +25,11 @@ def _rsi_for(symbol: str, price_panel) -> float | None:
 
 
 def run(top_n: int | None, limit: int | None, dry_run: bool, force_refresh: bool) -> None:
-    uni = universe.build(top_n=top_n)
+    # --top-n is a testing convenience: it overrides BOTH the NSE equity cap
+    # and the US equity cap at once, for a fast small run. In production
+    # (no override) they're separate knobs — config.EQUITY_TOP_N (200) vs
+    # config.UNIVERSE_TOP_N (100) — split out 2026-09-17.
+    uni = universe.build(equity_top_n=top_n)
     as_of = uni["as_of"]
     price_panel = uni["price_panel"]
 
@@ -99,7 +103,8 @@ def run(top_n: int | None, limit: int | None, dry_run: bool, force_refresh: bool
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--top-n", type=int, default=None, help="override UNIVERSE_TOP_N")
+    parser.add_argument("--top-n", type=int, default=None,
+                         help="override EQUITY_TOP_N (NSE) and UNIVERSE_TOP_N (US equity leg) together, for a fast test run")
     parser.add_argument("--limit", type=int, default=None, help="cap equities actually scraped (testing)")
     parser.add_argument("--dry-run", action="store_true", help="print instead of sending to Telegram")
     parser.add_argument("--force-refresh-fundamentals", action="store_true", help="bypass the 7-day fundamentals cache")

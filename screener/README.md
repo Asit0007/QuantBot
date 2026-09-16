@@ -86,17 +86,22 @@ to the rest of the run.
 
 ## Universe sizing
 
-The equity tier is bounded to the top `UNIVERSE_TOP_N` (default 100, was 400
-until 2026-09-17) NSE names by average daily turnover over
-`TURNOVER_LOOKBACK_DAYS` (default 40 trading days) — a reproducible, index-
-committee-independent cut, the same approach the workspace already settled
-on for NSE research (see the `nse-bhavcopy-is-the-data-source` memory). This
-also bounds how many pages get scraped from Screener.in per run.
-`UNIVERSE_TOP_N` is shared across every NSE tier (equity/ETF/REIT/InvIT/SGB)
-and the S&P 500 leg — it's only ever a ceiling, so a tier smaller than it
-(all four non-equity NSE tiers, currently) is unaffected. Crypto is the one
-deliberate exception, on its own `CRYPTO_TOP_N` (default 50) — see "Asset
-coverage" above.
+NSE equities are bounded to the top `EQUITY_TOP_N` (default 200 — 100 for a
+few hours on 2026-09-17 when it briefly shared `UNIVERSE_TOP_N`, before being
+split into its own knob same day; 400 before that) by average daily turnover
+over `TURNOVER_LOOKBACK_DAYS` (default 40 trading days) — a reproducible,
+index-committee-independent cut, the same approach the workspace already
+settled on for NSE research (see the `nse-bhavcopy-is-the-data-source`
+memory). This also bounds how many pages get scraped from Screener.in per
+run.
+
+`UNIVERSE_TOP_N` (default 100) is the shared cap for every OTHER NSE tier
+(ETF/REIT/InvIT/SGB) and the S&P 500 leg — it's only ever a ceiling, so a
+tier smaller than it (all four non-equity NSE tiers, currently) is
+unaffected. Crypto is on its own separate `CRYPTO_TOP_N` (default 50) — see
+"Asset coverage" above. `main.py --top-n N` overrides `EQUITY_TOP_N` and the
+S&P 500 leg together, as a fast-test convenience — it does not touch
+`UNIVERSE_TOP_N`'s other three NSE tiers or crypto.
 
 ## The value screen, exactly
 
@@ -177,12 +182,16 @@ PYTHONPATH=. screener/.venv/bin/python -m screener.main --dry-run --limit 20
 ```
 
 `--limit` caps how many equities actually get scraped from Screener.in —
-use it for testing. A full run against the default 400-name equity universe
-takes ~13–20 minutes (400 requests x 1.5s politeness delay, plus network
-latency) on a cold cache, plus another 1–3 minutes for the 200-coin crypto
-RSI scan (no politeness delay there, just ccxt's own rate limiter); a
-same-week equity rerun is much faster since fundamentals are cached for 7
-days. Drop `--dry-run` to actually send to Telegram once
+use it for testing. Equities are the dominant cost: the default 200-name
+universe is ~200 requests x 1.5s politeness delay + network latency, so
+~6–10 minutes cold-cache; a same-week rerun is much faster since
+fundamentals are cached for 7 days. Crypto (50 coins) and the S&P 500 leg
+(one paginated Alpaca fetch, ~16s regardless of top-N — verified
+2026-09-17) are both fast by comparison. A real end-to-end run via the
+scheduled `launchd` path, equity fundamentals mostly warm-cached, finished
+in `4m 3s` (`../quant_bot-screener/screener/data/logs/daily-2026-09-17.log`)
+— treat the cold-cache estimate above as the number that matters for a
+fresh day. Drop `--dry-run` to actually send to Telegram once
 `SCREENER_TELEGRAM_BOT_TOKEN` / `SCREENER_TELEGRAM_CHAT_ID` (or the shared
 `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` fallback) are set in `.env`.
 
