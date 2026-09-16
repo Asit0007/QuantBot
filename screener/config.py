@@ -40,8 +40,17 @@ MIN_SALES_CAGR_PCT = float(os.getenv("MIN_SALES_CAGR_PCT", "0.0"))
 RSI_OVERSOLD = float(os.getenv("RSI_OVERSOLD", "30"))
 
 # Universe.
-UNIVERSE_TOP_N = int(os.getenv("UNIVERSE_TOP_N", "300"))
+UNIVERSE_TOP_N = int(os.getenv("UNIVERSE_TOP_N", "400"))
 TURNOVER_LOOKBACK_DAYS = int(os.getenv("TURNOVER_LOOKBACK_DAYS", "40"))
+# ETF tier is filtered to this name substring (case-insensitive, matched
+# against the bhavcopy FinInstrmNm) rather than reported in full — narrowed
+# to Gold ETFs only on 2026-09-16. Empty string disables the filter.
+ETF_NAME_FILTER = os.getenv("ETF_NAME_FILTER", "GOLD")
+
+# Crypto — top N Binance USDT pairs by 24h quote volume (same "reproducible,
+# no index committee" reasoning as the NSE turnover cut), replacing the old
+# BTC-only check.
+CRYPTO_TOP_N = int(os.getenv("CRYPTO_TOP_N", "200"))
 
 # Telegram — separate vars from the trading bot's, so this can point at a
 # different bot/chat; falls back to the bot's own vars if unset.

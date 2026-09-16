@@ -31,7 +31,7 @@ def run(top_n: int | None, limit: int | None, dry_run: bool, force_refresh: bool
 
     equity_symbols = uni["equity"][:limit] if limit else uni["equity"]
     print(f"Universe as of {as_of}: {len(equity_symbols)} equities to screen "
-          f"(of {len(uni['equity'])} in the top-N), {len(uni['etf'])} ETFs, "
+          f"(of {len(uni['equity'])} in the top-N), {len(uni['etf'])} Gold ETFs, "
           f"{len(uni['reit'])} REITs, {len(uni['invit'])} InvITs, {len(uni['sgb'])} SGBs",
           file=sys.stderr)
 
@@ -64,9 +64,15 @@ def run(top_n: int | None, limit: int | None, dry_run: bool, force_refresh: bool
                 items.append((symbol, price, rsi))
         price_only_oversold[tier_label] = items
 
-    btc = binance_rsi.fetch_btc_snapshot()
-    if btc and btc["rsi"] < config.RSI_OVERSOLD:
-        price_only_oversold["Crypto"] = [(btc["symbol"], btc["price"], btc["rsi"])]
+    def _crypto_progress(i: int, total: int, symbol: str) -> None:
+        print(f"  [crypto {i}/{total}] {symbol}", end="\r", file=sys.stderr)
+
+    print(f"Scanning top {config.CRYPTO_TOP_N} crypto by 24h USDT volume...", file=sys.stderr)
+    crypto_snapshots = binance_rsi.fetch_top_n_snapshot(config.CRYPTO_TOP_N, progress=_crypto_progress)
+    print(file=sys.stderr)
+    crypto_oversold = [(s["symbol"], s["price"], s["rsi"]) for s in crypto_snapshots if s["rsi"] < config.RSI_OVERSOLD]
+    if crypto_oversold:
+        price_only_oversold["Crypto"] = crypto_oversold
 
     messages = digest.build_digest(as_of, value_oversold, value_qualified, price_only_oversold)
 

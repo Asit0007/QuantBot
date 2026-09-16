@@ -31,16 +31,22 @@ def build(end_date: dt.date | None = None, top_n: int | None = None) -> dict:
     price_panel = nse_bhavcopy.build_price_panel(window)
     turnover = nse_bhavcopy.average_turnover(window)
 
-    def top_symbols(tier: str, n: int | None = None) -> list[str]:
-        symbols = latest.loc[latest["tier"] == tier, "symbol"]
-        ranked = turnover.reindex(symbols).dropna().sort_values(ascending=False)
+    def top_symbols(tier: str, n: int | None = None, name_contains: str | None = None) -> list[str]:
+        rows = latest[latest["tier"] == tier]
+        if name_contains:
+            rows = rows[rows["name"].str.contains(name_contains, case=False, na=False)]
+        ranked = turnover.reindex(rows["symbol"]).dropna().sort_values(ascending=False)
         return list(ranked.index[:n] if n else ranked.index)
 
     return {
         "as_of": latest_date,
         "price_panel": price_panel,  # symbol x date close, for RSI
         "equity": top_symbols("EQUITY", top_n),
-        "etf": top_symbols("ETF"),
+        # Narrowed to Gold ETFs only (config.ETF_NAME_FILTER) — matched
+        # against the full instrument name, same basis the ETF/equity split
+        # itself uses, not the ticker (a ticker-only match would miss a
+        # gold fund whose ticker doesn't happen to spell "GOLD").
+        "etf": top_symbols("ETF", name_contains=config.ETF_NAME_FILTER or None),
         "reit": top_symbols("REIT"),
         "invit": top_symbols("INVIT"),
         "sgb": top_symbols("SGB"),

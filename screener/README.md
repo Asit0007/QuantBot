@@ -27,10 +27,10 @@ doctrine file itself (2026-09-16), not silently ignored:
 | Tier | Source | Value screen? | RSI? |
 |---|---|---|---|
 | NSE equities | bhavcopy (price) + Screener.in (fundamentals) | Yes — full 5-parameter test | Yes, on qualifiers |
-| ETFs | bhavcopy | No (a basket has no moat/ROIC to test) | Yes |
+| Gold ETFs | bhavcopy | No (a basket has no moat/ROIC to test) | Yes |
 | REITs / InvITs | bhavcopy | **Not yet** — see Limitations | Yes |
 | Sovereign Gold Bonds | bhavcopy | No (no earnings at all) | Yes |
-| BTC | Binance via ccxt | No | Yes |
+| Crypto (top 200 by volume) | Binance via ccxt | No | Yes |
 | US equities (S&P 500) | — | — | **Deferred**, see below |
 
 NSE bhavcopy carries clean series codes for the first five rows (verified
@@ -41,19 +41,43 @@ NSE doesn't give ETFs their own series code), `RR` = REITs, `IV` = InvITs,
 ...) are excluded outright — see `adapters/nse_bhavcopy.py`'s
 `TIER_BY_SERIES`.
 
+**ETF tier narrowed to Gold ETFs only (2026-09-16), by request.** Of NSE's
+~99 ETFs, `config.ETF_NAME_FILTER` (default `GOLD`) keeps only the ~11 whose
+bhavcopy instrument name contains it (`GOLDBEES`, `HDFCGOLD`, `SETFGOLD`,
+etc.) — same name-based match the ETF/equity split itself uses. Set it to
+an empty string to report every ETF again, as before.
+
+**Crypto expanded from BTC-only to the top `CRYPTO_TOP_N` (default 200)
+Binance USDT pairs by 24h quote volume (2026-09-16)** — see
+`adapters/binance_rsi.fetch_top_n_snapshot`. Same "reproducible, no index
+committee" reasoning as the NSE turnover cut; no market-cap field exists on
+Binance, so volume is the ranking key. Two exclusion lists keep this honest:
+stablecoins (`USDT`/`USDC`/`RLUSD`/`USDE`/... — RSI on a $1-pegged asset is
+meaningless) and Binance's tokenized-stock products (`GOOGLB`, `TSLAB`,
+`NVDAB`, `COINB`, ... — these are equities, not crypto, and would be a real
+mislabeling if they slipped into a "Crypto, oversold" line). Both lists are
+explicit and observed-live rather than pattern-guessed — a bare "ends in B"
+rule would incorrectly exclude `SHIB`, which is real crypto. Re-verify
+against a live top-N run if Binance adds new stablecoins or tokenized
+products; see the lists' comments in `binance_rsi.py`.
+
 **US S&P 500 is deferred, not built.** No verified working free data source
 exists as of 2026-09-16 (per the `market-data-source-findings` memory:
-Alpaca needs a key, Yahoo Finance 429s, yfinance untested). Revisit once
-there's a real source — don't guess at one.
+Alpaca needs a key — and there's a standing decision on record not to get
+one, from the retracted breadth-strategy research; Yahoo Finance 429s;
+yfinance untested and explicitly flagged "don't build on it either way").
+Revisit once there's a real source, or a conscious decision to get a key —
+don't guess at one.
 
 ## Universe sizing
 
-The equity tier is bounded to the top `UNIVERSE_TOP_N` (default 300) NSE
+The equity tier is bounded to the top `UNIVERSE_TOP_N` (default 400) NSE
 names by average daily turnover over `TURNOVER_LOOKBACK_DAYS` (default 40
 trading days) — a reproducible, index-committee-independent cut, the same
 approach the workspace already settled on for NSE research (see the
 `nse-bhavcopy-is-the-data-source` memory). This also bounds how many pages
-get scraped from Screener.in per run.
+get scraped from Screener.in per run. Crypto uses the analogous
+`CRYPTO_TOP_N` (default 200) — see "Asset coverage" above.
 
 ## The value screen, exactly
 
@@ -134,10 +158,12 @@ PYTHONPATH=. screener/.venv/bin/python -m screener.main --dry-run --limit 20
 ```
 
 `--limit` caps how many equities actually get scraped from Screener.in —
-use it for testing. A full run against the default 300-name universe takes
-~10–15 minutes (300 requests x 1.5s politeness delay, plus network latency)
-on a cold cache; a same-week rerun is much faster since fundamentals are
-cached for 7 days. Drop `--dry-run` to actually send to Telegram once
+use it for testing. A full run against the default 400-name equity universe
+takes ~13–20 minutes (400 requests x 1.5s politeness delay, plus network
+latency) on a cold cache, plus another 1–3 minutes for the 200-coin crypto
+RSI scan (no politeness delay there, just ccxt's own rate limiter); a
+same-week equity rerun is much faster since fundamentals are cached for 7
+days. Drop `--dry-run` to actually send to Telegram once
 `SCREENER_TELEGRAM_BOT_TOKEN` / `SCREENER_TELEGRAM_CHAT_ID` (or the shared
 `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` fallback) are set in `.env`.
 
