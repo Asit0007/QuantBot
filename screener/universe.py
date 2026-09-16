@@ -1,13 +1,16 @@
 """
 Builds today's instrument universe from bhavcopy, split into tiers.
 
-Equity candidates are bounded to the top N by average daily turnover rather
-than all ~2,600 EQ-series names — that's a reproducible, index-committee-
-independent selection (the same reasoning the workspace already settled on
-for NSE research: see the nse-bhavcopy-is-the-data-source memory), and it's
-what keeps the Screener.in scrape to a polite size. SME/T2T/surveillance
-series (SM, BE, BZ, ST, ...) and government bonds (GS, SG, TB) are excluded
-entirely — see nse_bhavcopy.TIER_BY_SERIES.
+Every NSE tier (equity, ETF, REIT, InvIT, SGB) is bounded to the top
+UNIVERSE_TOP_N by average daily turnover within that tier, rather than
+reported in full — that's a reproducible, index-committee-independent
+selection (the same reasoning the workspace already settled on for NSE
+research: see the nse-bhavcopy-is-the-data-source memory), and for equities
+it's what keeps the Screener.in scrape to a polite size. A tier smaller than
+UNIVERSE_TOP_N (e.g. 6 REITs) is unaffected — the cap only ever removes
+names, never pads the list. SME/T2T/surveillance series (SM, BE, BZ, ST,
+...) and government bonds (GS, SG, TB) are excluded entirely — see
+nse_bhavcopy.TIER_BY_SERIES.
 """
 
 from __future__ import annotations
@@ -45,9 +48,10 @@ def build(end_date: dt.date | None = None, top_n: int | None = None) -> dict:
         # Narrowed to Gold ETFs only (config.ETF_NAME_FILTER) — matched
         # against the full instrument name, same basis the ETF/equity split
         # itself uses, not the ticker (a ticker-only match would miss a
-        # gold fund whose ticker doesn't happen to spell "GOLD").
-        "etf": top_symbols("ETF", name_contains=config.ETF_NAME_FILTER or None),
-        "reit": top_symbols("REIT"),
-        "invit": top_symbols("INVIT"),
-        "sgb": top_symbols("SGB"),
+        # gold fund whose ticker doesn't happen to spell "GOLD") — then
+        # top_n applied same as every other tier.
+        "etf": top_symbols("ETF", top_n, name_contains=config.ETF_NAME_FILTER or None),
+        "reit": top_symbols("REIT", top_n),
+        "invit": top_symbols("INVIT", top_n),
+        "sgb": top_symbols("SGB", top_n),
     }

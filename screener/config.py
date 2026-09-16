@@ -39,8 +39,11 @@ MIN_SALES_CAGR_PCT = float(os.getenv("MIN_SALES_CAGR_PCT", "0.0"))
 # RSI overlay (entry timing only — see ValueInvesting.md's scoped exception).
 RSI_OVERSOLD = float(os.getenv("RSI_OVERSOLD", "30"))
 
-# Universe.
-UNIVERSE_TOP_N = int(os.getenv("UNIVERSE_TOP_N", "400"))
+# Universe. UNIVERSE_TOP_N is the shared cap across every NSE tier (equity,
+# ETF, REIT, InvIT, SGB) — each ranked by its own turnover within its tier,
+# so e.g. "top 100" on a tier with only 11 names (Gold ETFs) is a no-op, not
+# an error. Narrowed 400 -> 100 on 2026-09-17, by request.
+UNIVERSE_TOP_N = int(os.getenv("UNIVERSE_TOP_N", "100"))
 TURNOVER_LOOKBACK_DAYS = int(os.getenv("TURNOVER_LOOKBACK_DAYS", "40"))
 # ETF tier is filtered to this name substring (case-insensitive, matched
 # against the bhavcopy FinInstrmNm) rather than reported in full — narrowed
@@ -49,8 +52,16 @@ ETF_NAME_FILTER = os.getenv("ETF_NAME_FILTER", "GOLD")
 
 # Crypto — top N Binance USDT pairs by 24h quote volume (same "reproducible,
 # no index committee" reasoning as the NSE turnover cut), replacing the old
-# BTC-only check.
-CRYPTO_TOP_N = int(os.getenv("CRYPTO_TOP_N", "200"))
+# BTC-only check. Deliberately a SEPARATE knob from UNIVERSE_TOP_N (50 vs
+# 100 as of 2026-09-17, by request) rather than reusing it.
+CRYPTO_TOP_N = int(os.getenv("CRYPTO_TOP_N", "50"))
+
+# US equities (S&P 500) — Alpaca market-data API, free tier. Optional: unset
+# means this leg is silently skipped (fails closed), same as Binance being
+# unreachable just means BTC/crypto don't appear. NOT in _REQUIRED because
+# the rest of the screener must keep working without it.
+ALPACA_API_KEY_ID = os.getenv("ALPACA_API_KEY_ID")
+ALPACA_API_SECRET_KEY = os.getenv("ALPACA_API_SECRET_KEY")
 
 # Telegram — separate vars from the trading bot's, so this can point at a
 # different bot/chat; falls back to the bot's own vars if unset.
