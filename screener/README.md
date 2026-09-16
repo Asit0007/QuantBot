@@ -30,8 +30,8 @@ doctrine file itself (2026-09-16), not silently ignored:
 | Gold ETFs | bhavcopy | No (a basket has no moat/ROIC to test) | Yes |
 | REITs / InvITs | bhavcopy | **Not yet** — see Limitations | Yes |
 | Sovereign Gold Bonds | bhavcopy | No (no earnings at all) | Yes |
-| Crypto (top 200 by volume) | Binance via ccxt | No | Yes |
-| US equities (S&P 500) | — | — | **Deferred**, see below |
+| Crypto (top 50 by volume) | Binance via ccxt | No | Yes |
+| US equities (top 100 S&P 500 by $ volume) | Alpaca market data | No (no fundamentals source wired up — see below) | Yes |
 
 NSE bhavcopy carries clean series codes for the first five rows (verified
 live 2026-09-16): `EQ` = equities + ETFs (split by an "ETF" name heuristic —
@@ -47,37 +47,56 @@ bhavcopy instrument name contains it (`GOLDBEES`, `HDFCGOLD`, `SETFGOLD`,
 etc.) — same name-based match the ETF/equity split itself uses. Set it to
 an empty string to report every ETF again, as before.
 
-**Crypto expanded from BTC-only to the top `CRYPTO_TOP_N` (default 200)
-Binance USDT pairs by 24h quote volume (2026-09-16)** — see
-`adapters/binance_rsi.fetch_top_n_snapshot`. Same "reproducible, no index
-committee" reasoning as the NSE turnover cut; no market-cap field exists on
-Binance, so volume is the ranking key. Two exclusion lists keep this honest:
-stablecoins (`USDT`/`USDC`/`RLUSD`/`USDE`/... — RSI on a $1-pegged asset is
-meaningless) and Binance's tokenized-stock products (`GOOGLB`, `TSLAB`,
-`NVDAB`, `COINB`, ... — these are equities, not crypto, and would be a real
-mislabeling if they slipped into a "Crypto, oversold" line). Both lists are
-explicit and observed-live rather than pattern-guessed — a bare "ends in B"
-rule would incorrectly exclude `SHIB`, which is real crypto. Re-verify
-against a live top-N run if Binance adds new stablecoins or tokenized
-products; see the lists' comments in `binance_rsi.py`.
+**Crypto expanded from BTC-only to the top `CRYPTO_TOP_N` (default 50, was
+200 until 2026-09-17) Binance USDT pairs by 24h quote volume (2026-09-16)**
+— see `adapters/binance_rsi.fetch_top_n_snapshot`. Same "reproducible, no
+index committee" reasoning as the NSE turnover cut; no market-cap field
+exists on Binance, so volume is the ranking key. Two exclusion lists keep
+this honest: stablecoins (`USDT`/`USDC`/`RLUSD`/`USDE`/... — RSI on a
+$1-pegged asset is meaningless) and Binance's tokenized-stock products
+(`GOOGLB`, `TSLAB`, `NVDAB`, `COINB`, ... — these are equities, not crypto,
+and would be a real mislabeling if they slipped into a "Crypto, oversold"
+line). Both lists are explicit and observed-live rather than pattern-
+guessed — a bare "ends in B" rule would incorrectly exclude `SHIB`, which is
+real crypto. Re-verify against a live top-N run if Binance adds new
+stablecoins or tokenized products; see the lists' comments in
+`binance_rsi.py`.
 
-**US S&P 500 is deferred, not built.** No verified working free data source
-exists as of 2026-09-16 (per the `market-data-source-findings` memory:
-Alpaca needs a key — and there's a standing decision on record not to get
-one, from the retracted breadth-strategy research; Yahoo Finance 429s;
-yfinance untested and explicitly flagged "don't build on it either way").
-Revisit once there's a real source, or a conscious decision to get a key —
-don't guess at one.
+**US S&P 500 built 2026-09-17**, once Asit got a free Alpaca market-data
+key (superseding the earlier "don't get one" note — see the
+`session-deliverables` memory; that note was scoped to a retracted, unrelated
+breadth-strategy experiment). See `adapters/alpaca_sp500.py`. PRICE ONLY —
+Alpaca has no fundamentals endpoint, so there's no Graham screen for this
+tier; building one needs a separate verified fundamentals source, not
+attempted. Two pieces, both verified live:
+- **Constituent list**: GitHub's maintained `datasets/s-and-p-500-companies`
+  CSV, cached locally with a 30-day TTL (membership changes rarely).
+- **Price + ranking**: Alpaca's multi-symbol `/v2/stocks/bars` endpoint,
+  ranked by average dollar volume (close × volume) — Alpaca's free tier has
+  no market-cap field either, same situation as Binance. This endpoint
+  **paginates** once the combined bar count crosses ~1500-2000 rows — all
+  503 constituents × ~69 daily bars needs 4 pages, ~16s total; the adapter
+  loops on `next_page_token` rather than assuming one page covers everything.
+  One quirk worth remembering: multi-class tickers use **dot** notation
+  (`BRK.B`), not dash — `BRK-B` 400s.
+
+Fails closed like the crypto leg: if `ALPACA_API_KEY_ID` /
+`ALPACA_API_SECRET_KEY` are unset, this tier is silently skipped, not fatal
+to the rest of the run.
 
 ## Universe sizing
 
-The equity tier is bounded to the top `UNIVERSE_TOP_N` (default 400) NSE
-names by average daily turnover over `TURNOVER_LOOKBACK_DAYS` (default 40
-trading days) — a reproducible, index-committee-independent cut, the same
-approach the workspace already settled on for NSE research (see the
-`nse-bhavcopy-is-the-data-source` memory). This also bounds how many pages
-get scraped from Screener.in per run. Crypto uses the analogous
-`CRYPTO_TOP_N` (default 200) — see "Asset coverage" above.
+The equity tier is bounded to the top `UNIVERSE_TOP_N` (default 100, was 400
+until 2026-09-17) NSE names by average daily turnover over
+`TURNOVER_LOOKBACK_DAYS` (default 40 trading days) — a reproducible, index-
+committee-independent cut, the same approach the workspace already settled
+on for NSE research (see the `nse-bhavcopy-is-the-data-source` memory). This
+also bounds how many pages get scraped from Screener.in per run.
+`UNIVERSE_TOP_N` is shared across every NSE tier (equity/ETF/REIT/InvIT/SGB)
+and the S&P 500 leg — it's only ever a ceiling, so a tier smaller than it
+(all four non-equity NSE tiers, currently) is unaffected. Crypto is the one
+deliberate exception, on its own `CRYPTO_TOP_N` (default 50) — see "Asset
+coverage" above.
 
 ## The value screen, exactly
 

@@ -14,7 +14,7 @@ import datetime as dt
 import sys
 
 from screener import config, digest, telegram_send, universe, value_screen
-from screener.adapters import binance_rsi, screener_in
+from screener.adapters import alpaca_sp500, binance_rsi, screener_in
 from screener.indicators import latest_rsi
 
 
@@ -73,6 +73,18 @@ def run(top_n: int | None, limit: int | None, dry_run: bool, force_refresh: bool
     crypto_oversold = [(s["symbol"], s["price"], s["rsi"]) for s in crypto_snapshots if s["rsi"] < config.RSI_OVERSOLD]
     if crypto_oversold:
         price_only_oversold["Crypto"] = crypto_oversold
+
+    def _us_progress(i: int, total: int, symbol: str) -> None:
+        print(f"  [us-equity {i}/{total}] {symbol}", end="\r", file=sys.stderr)
+
+    print(f"Scanning top {top_n or config.UNIVERSE_TOP_N} S&P 500 by avg dollar volume...", file=sys.stderr)
+    us_snapshots = alpaca_sp500.fetch_top_n_snapshot(top_n or config.UNIVERSE_TOP_N, progress=_us_progress)
+    print(file=sys.stderr)
+    if not us_snapshots:
+        print("  (skipped — ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY not set, or Alpaca unreachable)", file=sys.stderr)
+    us_oversold = [(s["symbol"], s["price"], s["rsi"]) for s in us_snapshots if s["rsi"] < config.RSI_OVERSOLD]
+    if us_oversold:
+        price_only_oversold["US Equity (S&P 500)"] = us_oversold
 
     messages = digest.build_digest(as_of, value_oversold, value_qualified, price_only_oversold)
 
