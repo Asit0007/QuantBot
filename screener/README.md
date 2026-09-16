@@ -108,12 +108,11 @@ flagged plainly, not silently underserved.
   `fetch_fundamentals` fails closed (returns `None`) on any parse failure
   rather than scoring on a half-filled record.
 - **Binance (ccxt)** — same client pattern as `notifier.py`'s RSI radar.
-  **Not verified from this Mac in this session** — the live test here hit
-  an instant connection refusal to `api.binance.com`, which may be this
-  sandboxed session's network egress rather than a real block (the
-  `market-data-source-findings` memory recorded it working from this same
-  Mac on 2026-09-13). Verify in a normal terminal before relying on the BTC
-  leg; the code fails closed (BTC just doesn't appear) if it's unreachable.
+  **Verified 2026-09-16 from a normal terminal**: `fetch_btc_snapshot()`
+  returned a live price and RSI. The earlier same-day connection refusal to
+  `api.binance.com` was confirmed to be that sandboxed session's network
+  egress, not a real block. The code still fails closed (BTC just doesn't
+  appear) if Binance is unreachable on a given run.
 - **India 10Y G-Sec yield** — **no free live source found.** `config.py`
   requires `INDIA_10Y_GSEC_YIELD_PCT` in `.env` with no default; the tool
   refuses to run without it rather than guess. Look it up from
