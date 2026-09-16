@@ -142,6 +142,13 @@ cached for 7 days. Drop `--dry-run` to actually send to Telegram once
 `SCREENER_TELEGRAM_BOT_TOKEN` / `SCREENER_TELEGRAM_CHAT_ID` (or the shared
 `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` fallback) are set in `.env`.
 
+**One-way only.** This is push, not request-response — it is not wired into
+`notifier.py`'s `CommandHandler` (`/status /balance /pos /pause /resume
+/help`, all about the live BTC bot), so there is no Telegram command that
+triggers a run. The only way a digest reaches Telegram is the daily
+`launchd` job (see `deploy/` and "Roadmap / open items" #5 below) or a
+manual non-`--dry-run` invocation from a terminal.
+
 ## Deploy safety
 
 This lives in the same repo as the live BTC bot, whose VM reconciles `main`
@@ -164,7 +171,18 @@ branches stay unmerged, `main` stays exactly what's running in production.
    Screener.in template is mapped the way the equity one is here.
 4. **US S&P 500** — pick a real data source first (a free Alpaca key is the
    likeliest unblock per existing memory); don't build on an unverified one.
-5. **Scheduling** — daily was the agreed cadence. Not wired to `launchd` yet;
-   `JobPipe`'s pattern (`~/Applications/*.app` launcher, because a plain cron
-   job under `~/Documents` gets TCC-denied) is the template to reuse — see
-   `My Persona/CLAUDE.md`'s JobPipe section.
+5. ~~**Scheduling**~~ — **done 2026-09-16.** `deploy/` has the full launchd
+   setup: a signed launcher app (JobPipe's `~/Applications/*.app` pattern,
+   since a plain LaunchAgent gets TCC-denied under `~/Documents`) driving
+   `run-daily.sh` at 19:00 IST. It runs from a **dedicated worktree**,
+   `../quant_bot-screener` (branch `screener-scheduled`), not this checkout —
+   `value-rsi-screener` is a research branch that stays unmerged, and this
+   checkout gets switched to `main` for live-bot work, which would silently
+   break a job pointed here. The worktree hard-resets to
+   `origin/value-rsi-screener` on every run, so **a local commit on this
+   branch has no effect on the scheduled digest until it's pushed.** One
+   manual, one-time step remains and can't be scripted: grant the launcher
+   app Full Disk Access in System Settings > Privacy & Security (see
+   `deploy/build-launcher.sh`'s output for the exact path) — until that's
+   done, `launchctl kickstart` fires but the job exits without reading the
+   repo.
