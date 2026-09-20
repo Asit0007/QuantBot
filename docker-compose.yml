@@ -46,7 +46,24 @@ services:
       target: dashboard
     container_name: quantbot_dashboard
     restart: unless-stopped
-    env_file: .env
+    # NOT `env_file: .env`. This is the only container the public internet can
+    # reach (nginx:8888 -> quantbot.asitminz.com), and the dashboard is read-only:
+    # it renders state files off the shared volume and never talks to an exchange.
+    # Handing it the whole .env put BINANCE_API_KEY/SECRET and TELEGRAM_BOT_TOKEN
+    # in the address space of the one process an attacker can reach, to be read by
+    # nothing -- dashboard.py touches six env vars in total, and these are the only
+    # three that aren't already correct in the image
+    # (verify: `grep -n 'getenv\|environ' dashboard.py`).
+    #
+    # The other three -- DATA_DIR, DASHBOARD_HOST, DASHBOARD_PORT -- are left to the
+    # Dockerfile's `dashboard` stage, which sets them to the values a container needs.
+    # Leaving them out also fixes a quiet bug: `.env` carries DATA_DIR=. for running
+    # dashboard.py on bare metal, and env_file was overriding the image's /app/data
+    # with it, so a local `docker compose up` read state from the wrong directory.
+    environment:
+      LEVERAGE:             ${LEVERAGE:-5}
+      EXIT_MODEL:           ${EXIT_MODEL:-stop}
+      DASHBOARD_REFRESH_MS: ${DASHBOARD_REFRESH_MS:-15000}
     volumes:
       - quantbot_data:/app/data
     ports:
