@@ -1,0 +1,25 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Research / multi-market dependencies — LOCAL ONLY.
+#
+#  These are DELIBERATELY NOT in requirements.txt.
+#
+#  The VM's pull deployer (deploy/quantbot-pull-deploy.sh:98) classifies a
+#  change to requirements.txt as INFRA, which triggers a full rebuild of every
+#  container — including the live BTC bot — within five minutes of the commit
+#  landing on main. None of the packages below are needed by bot.py,
+#  notifier.py or dashboard.py, so putting them there would rebuild production
+#  to install things production never imports.
+#
+#  Install into the local venv only:
+#      ./venv/bin/pip install -r requirements-research.txt
+#
+#  Pinned with == for the same reason requirements.txt is: a rebuild months
+#  later must not silently pull a breaking change into research that the
+#  strategy is derived from.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Exchange session calendars (XNSE = NSE India, XNYS = NYSE).
+# Replaces bot.py's secs_to_next_candle() UTC-modulo assumption for markets
+# that actually close. Hand-rolling holiday tables is a maintenance trap whose
+# failure mode is silent, plausible-looking wrong answers.
+exchange_calendars==4.13.2

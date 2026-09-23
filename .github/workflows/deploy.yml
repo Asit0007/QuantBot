@@ -25,6 +25,7 @@ jobs:
       - name: Syntax errors only (fail the build on real errors)
         run: |
           flake8 bot.py corpus_manager.py dashboard.py notifier.py \
+            ohlcv_cache.py markets/ news/ research/ tests/ \
             --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Compile check all Python files
@@ -33,6 +34,17 @@ jobs:
           python -m py_compile corpus_manager.py
           python -m py_compile dashboard.py
           python -m py_compile notifier.py
+          # ohlcv_cache.py was tracked but never checked until 2026-09-13.
+          python -m py_compile ohlcv_cache.py
+          # Multi-market modules. These are NOT imported by production — the
+          # containers never load them — but research code that nothing
+          # exercises automatically is code you should assume is broken: an
+          # IDE's "absolutize imports" pass once silently broke all ten
+          # backtest scripts for nine days precisely because backtest/ is
+          # gitignored and runs nowhere. Compiling them here is the cheap
+          # guard against a repeat.
+          find markets news research tests -name '*.py' -print0 \
+            | xargs -0 -r -n1 python -m py_compile
           echo "All files compile OK"
 
   # ── 2. Deploy — REMOVED 2026-09-06, replaced by a pull-based deployer ──
