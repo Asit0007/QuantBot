@@ -1,0 +1,12 @@
+# Screener-only dependencies — deliberately NOT in the root requirements.txt.
+# The VM's pull-deployer full-rebuilds every container (incl. the live bot)
+# on any requirements.txt change; this tool never runs on that box, so it
+# gets its own file and its own venv. See CLAUDE.md's deploy-safety notes.
+requests==2.32.5
+beautifulsoup4==4.14.2
+pandas==2.3.3
+numpy==2.4.2
+ta==0.11.0
+ccxt==4.5.40
+python-dotenv==1.2.2
+pyarrow==18.1.0

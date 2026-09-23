@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily value+RSI screener digest on a macOS laptop.
+
+  Build the launcher bundle first - deploy/build-launcher.sh - then:
+
+      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.asitminz.screener.daily.plist
+      launchctl print gui/$(id -u)/com.asitminz.screener.daily   # verify
+      launchctl kickstart -p gui/$(id -u)/com.asitminz.screener.daily   # run it now
+
+  To remove:
+      launchctl bootout gui/$(id -u)/com.asitminz.screener.daily
+
+  WHY launchd and not cron, and why a dedicated worktree instead of the main
+  quant_bot checkout: see run-daily.sh's header and quant_bot's root
+  CLAUDE.md / My Persona's CLAUDE.md (JobPipe section) for the long version.
+  Short version -- cron silently loses a run if the lid is shut at 19:00;
+  launchd replays a StartCalendarInterval missed while asleep (not while
+  powered off -- `runs = 0` looks exactly like a broken install in that
+  case). And value-rsi-screener is a research branch that must never merge
+  to main, while the interactive quant_bot checkout gets switched to `main`
+  for live-bot work -- pointing this job there would break the moment that
+  happened, so it targets ../quant_bot-screener (branch screener-scheduled,
+  hard-reset to origin/value-rsi-screener on every run) instead.
+
+  TIME: 19:00 IST, chosen to sit well after NSE close (15:30 IST) and after
+  bhavcopy is typically published. universe.build() falls back to the most
+  recent available bhavcopy within its lookback window rather than crashing
+  if today's isn't out yet, so a late publish costs staleness, not a failure.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.asitminz.screener.daily</string>
+
+    <!-- NOT run-daily.sh directly, and not /bin/bash either -- see
+         screener-launcher.c for why the TCC grant has to land on a real
+         Mach-O app bundle. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/apple/Applications/Screener Daily.app/Contents/MacOS/ScreenerDaily</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/quant_bot-screener/screener</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>19</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+    </dict>
+
+    <!-- The run's own output also goes to data/logs/daily-<date>.log; these
+         two catch what fails BEFORE the wrapper can log anything. -->
+    <key>StandardOutPath</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/quant_bot-screener/screener/data/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/quant_bot-screener/screener/data/logs/launchd.err.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

@@ -102,3 +102,7 @@ claude.md
 
 # Stray local files that shouldn't end up in the repo
 terraform/*.pdf
+
+# ─── Value+RSI screener (screener/) — cache, venv, local secrets ─────────────
+# .env / *.log / venv / .venv are already covered by the blanket patterns above.
+screener/data/
