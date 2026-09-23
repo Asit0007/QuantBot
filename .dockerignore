@@ -27,3 +27,11 @@ terraform/
 nginx/certs/
 nginx/htpasswd
 *.pdf
+
+# Research/paper-only code, never imported by bot.py/notifier.py/dashboard.py —
+# see .github/workflows/deploy.yml's compile-check comment
+screener/
+markets/
+news/
+research/
+tests/
