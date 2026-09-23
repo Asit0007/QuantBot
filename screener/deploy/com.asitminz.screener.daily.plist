@@ -43,7 +43,7 @@
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/apple/Documents/My VSC projects/My Persona/quant_bot-screener/screener</string>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/quant_bot-screener/screener</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -64,9 +64,9 @@
     <!-- The run's own output also goes to data/logs/daily-<date>.log; these
          two catch what fails BEFORE the wrapper can log anything. -->
     <key>StandardOutPath</key>
-    <string>/Users/apple/Documents/My VSC projects/My Persona/quant_bot-screener/screener/data/logs/launchd.out.log</string>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/quant_bot-screener/screener/data/logs/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/apple/Documents/My VSC projects/My Persona/quant_bot-screener/screener/data/logs/launchd.err.log</string>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/quant_bot-screener/screener/data/logs/launchd.err.log</string>
 
     <key>RunAtLoad</key>
     <false/>
