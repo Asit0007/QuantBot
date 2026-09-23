@@ -211,10 +211,15 @@ match none of the deployer's four classification regexes (`^(bot|
 corpus_manager)\.py$`, `^notifier\.py$`, `^dashboard\.py$|^assets/`,
 `^Dockerfile$|^\.dockerignore$|^requirements\.txt$|^docker-compose\.yml$|
 ^nginx/`) — verified against `deploy/quantbot-pull-deploy.sh` 2026-09-16.
-A commit touching only this directory is inert on the VM even if it ever
-reached `main`. It shouldn't: this branch (`value-rsi-screener`) follows the
-same rule the `multi-market` branch already established — research/tooling
-branches stay unmerged, `main` stays exactly what's running in production.
+A commit touching only this directory is inert on the VM. **2026-09-23:**
+`value-rsi-screener` and `multi-market` were both merged to `main` after
+verifying exactly this — `multi-market` touches no classified path at all,
+and `value-rsi-screener`'s one production-relevant change (`docker-compose.yml`)
+was a wanted fix: the dashboard container (the only one the internet can
+reach) had been handed the whole `.env`, including `BINANCE_API_KEY/SECRET`
+and the Telegram bot token, none of which `dashboard.py` uses. `.dockerignore`
+was extended first (`screener/`, `markets/`, `news/`, `research/`, `tests/`)
+so none of this research/tooling code gets baked into a production image.
 
 ## Roadmap / open items
 
@@ -229,12 +234,12 @@ branches stay unmerged, `main` stays exactly what's running in production.
    `~/Applications/*.app` pattern — a code identity for TCC to hang a grant
    on, if one's ever needed) driving `run-daily.sh` at 19:00 IST. It runs
    from a **dedicated worktree**, `../quant_bot-screener` (branch
-   `screener-scheduled`), not this checkout — `value-rsi-screener` is a
-   research branch that stays unmerged, and this checkout gets switched to
-   `main` for live-bot work, which would silently break a job pointed here.
-   The worktree hard-resets to `origin/value-rsi-screener` on every run, so
-   **a local commit on this branch has no effect on the scheduled digest
-   until it's pushed.**
+   `screener-scheduled`), not this checkout — the interactive checkout gets
+   switched to arbitrary branches for live-bot work, which would silently
+   break a job pointed here. **Since the 2026-09-23 merge to `main`** (see
+   "Deploy safety" above), the worktree hard-resets to `origin/main` on
+   every run instead of a dedicated screener branch, so **a local commit has
+   no effect on the scheduled digest until it's pushed to `main`.**
    **No manual TCC grant was actually needed.** JobPipe's own docs describe
    a required System Settings > Privacy & Security > Full Disk Access step;
    `launchctl kickstart` on this launcher ran clean on the first try —

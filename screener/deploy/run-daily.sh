@@ -4,14 +4,16 @@
 #
 # Runs from a DEDICATED worktree (this directory's repo root, branch
 # screener-scheduled) -- NOT the main quant_bot checkout. value-rsi-screener
-# is a research branch (quant_bot's root CLAUDE.md: never merge to main), and
-# the main checkout gets switched to `main` whenever there's live-bot work on
-# bot.py/notifier.py. A scheduled job pointed at that checkout would silently
-# stop finding screener/ the moment that happened. Instead this worktree
-# mirrors origin/value-rsi-screener on every run -- the same pull pattern the
-# VM already uses for the live bot (root CLAUDE.md §4.9: "the box mirrors the
-# repo exactly"). A local commit on value-rsi-screener has no effect here
-# until it's pushed.
+# and multi-market were merged to main 2026-09-23 (both verified inert for
+# the live bot: value-rsi-screener's only production-relevant change was a
+# docker-compose.yml security fix; multi-market never touches a file the
+# deployer classifies), so this worktree now mirrors origin/main instead --
+# the same pull pattern the VM already uses for the live bot (root CLAUDE.md
+# §4.9: "the box mirrors the repo exactly"). Still a dedicated worktree, not
+# the interactive quant_bot checkout: that one gets switched to arbitrary
+# branches for live-bot work, and a scheduled `reset --hard` landing there
+# would discard whatever was checked out. A local commit on `main` has no
+# effect here until it's pushed.
 #
 # Same launchd gotchas as JobPipe's run-daily.sh (deploy/build-launcher.sh in
 # that repo has the long version): no profile/PATH, no venv, no cwd, buffered
@@ -39,9 +41,9 @@ echo "  python: $PY"
 echo "==============================================================="
 
 cd "$REPO_ROOT" || exit 1
-echo "-- syncing worktree to origin/value-rsi-screener"
-git fetch origin value-rsi-screener
-git reset --hard origin/value-rsi-screener
+echo "-- syncing worktree to origin/main"
+git fetch origin main
+git reset --hard origin/main
 
 cd "$ROOT" || exit 1
 
