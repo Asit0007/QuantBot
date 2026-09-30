@@ -40,6 +40,24 @@ echo "  repo:   $REPO_ROOT"
 echo "  python: $PY"
 echo "==============================================================="
 
+# launchd replays a missed 19:00 at the next wake, and that wake can be a
+# 10-second maintenance DarkWake with no network: on 2026-09-23 and 2026-09-29
+# DNS failed, the run exited 1 after a few seconds and no digest was sent.
+# So wait for the network first. The limit counts ATTEMPTS, not wall-clock
+# time: a process frozen by sleep resumes at the next wake and keeps trying,
+# which turns a DarkWake firing into "run at the first real wake".
+wait_for_network() {
+  local url="${NET_CHECK_URL:-https://github.com}" tries="${NET_WAIT_TRIES:-60}" i
+  for ((i = 1; i <= tries; i++)); do
+    curl -sI --max-time 5 -o /dev/null "$url" && return 0
+    [ "$i" -eq 1 ] && echo "-- no network yet, waiting (up to $tries tries)"
+    sleep "${NET_WAIT_SLEEP:-10}"
+  done
+  echo "! no network after $tries tries -- nothing was run"
+  return 1
+}
+wait_for_network || exit 1
+
 cd "$REPO_ROOT" || exit 1
 echo "-- syncing worktree to origin/main"
 git fetch origin main
